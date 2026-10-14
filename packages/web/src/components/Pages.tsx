@@ -1,3 +1,4 @@
+import { CduView } from "./CduView";
 import { useEffect, useState, type ReactNode } from "react";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
@@ -7,6 +8,7 @@ import { AtcCard, NetworkChip } from "./AtcCard";
 import { AppCard } from "./AppCard";
 import { CockpitView, PairThisDevice } from "./Cockpit";
 import { EfbView } from "./EfbView";
+import { SimView } from "./SimView";
 import { AtlasPage, MyFlights } from "./FlightsPages";
 import { NotifyCard } from "./NotifyCard";
 import { ZuluClock } from "./StatusBar";
@@ -109,17 +111,18 @@ export function FlightsTab({ b, live }: { b: BridgeSnapshot; live: ReactNode }) 
 }
 
 /** The Fenix EFB only means something in the Fenix. */
-const isFenix = (b: BridgeSnapshot) => /fenix|fnx/i.test(b.sim?.aircraftTitle ?? "") || b.cockpit != null;
-type SysSeg = SystemsSection | "controls" | "efb";
+const isFenix = (b: BridgeSnapshot) => /fenix|fnx/i.test(b.sim?.aircraftTitle ?? "") || b.cockpit?.aircraft === "fenix-a320" || b.cockpit?.aircraft === "mock";
+type SysSeg = SystemsSection | "controls" | "view" | "efb" | "cdu";
 const sysFromHash = (): SysSeg => {
   const s = window.location.hash.split("/")[1];
-  return s === "efb" || s === "controls" ? s : "overview";
+  return s === "efb" || s === "controls" || s === "view" || s === "cdu" ? s : "overview";
 };
 /** Systems: what the aircraft is doing, and the controls. */
 export function SystemsTab({ b }: { b: BridgeSnapshot }) {
   const [picked, setSeg] = useState<SysSeg>(sysFromHash);
   const fenix = isFenix(b);
-  const seg: SysSeg = picked === "efb" && !fenix ? "overview" : picked;
+  const cdu = !!b.panel?.cdu;
+  const seg: SysSeg = (picked === "efb" && !fenix) || (picked === "cdu" && !cdu) ? "overview" : picked;
   // The VBuddy window on the PC picks Systems or EFB with the hash.
   useEffect(() => {
     const on = () => window.location.hash.startsWith("#systems") && setSeg(sysFromHash());
@@ -128,8 +131,8 @@ export function SystemsTab({ b }: { b: BridgeSnapshot }) {
   }, []);
   return (
     <>
-      <Segments<SysSeg> pills value={seg} onChange={setSeg} items={[...SYSTEMS_SECTIONS, ["controls", "Controls"], ...(fenix ? ([["efb", "Fenix EFB"]] as Array<[SysSeg, string]>) : [])]} />
-      {seg === "controls" ? <CockpitView b={b} /> : seg === "efb" ? <EfbView /> : <SystemsView b={b} section={seg} />}
+      <Segments<SysSeg> pills value={seg} onChange={setSeg} items={[...SYSTEMS_SECTIONS, ["controls", "Controls"], ["view", "Sim view"], ...(fenix ? ([["efb", "Fenix EFB"]] as Array<[SysSeg, string]>) : []), ...(cdu ? ([["cdu", "CDU"]] as Array<[SysSeg, string]>) : [])]} />
+      {seg === "controls" ? <CockpitView b={b} /> : seg === "view" ? <SimView b={b} /> : seg === "efb" ? <EfbView /> : seg === "cdu" ? <CduView b={b} /> : <SystemsView b={b} section={seg} />}
     </>
   );
 }

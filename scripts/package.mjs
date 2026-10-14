@@ -166,6 +166,9 @@ function icoFromPng(png) {
 
 async function main() {
   console.log(`VBuddy ${version} release build`);
+  // The bridge reports its own version to the updater: if it differs from package.json, installed copies would update forever.
+  const bridgeVersion = /VERSION = "([^"]+)"/.exec(readFileSync(join(root, "packages/bridge/src/version.ts"), "utf8"))?.[1];
+  if (bridgeVersion !== version) throw new Error(`packages/bridge/src/version.ts says ${bridgeVersion} but package.json says ${version}. Set both to the same version (pnpm version:set <x.y.z>).`);
   if (!flag("no-build")) {
     say("Building the packages");
     run("pnpm", ["install", "--frozen-lockfile"]);

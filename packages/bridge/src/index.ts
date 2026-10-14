@@ -19,7 +19,8 @@ import { NetworkService } from "./network/service.js";
 import { VatsimFeed } from "./network/vatsim-feed.js";
 import { tmpdir } from "node:os";
 import { Pairing } from "./control/pairing.js";
-import { CockpitService } from "./cockpit/service.js";
+import { CockpitService, type CockpitHub } from "./cockpit/service.js";
+import { CombinedCockpit } from "./cockpit/airliner.js";
 import { MockCockpit } from "./cockpit/mock-cockpit.js";
 import { FenixSim } from "./cockpit/fenix-sim.js";
 import { startServer, type ConsoleAction } from "./server.js";
@@ -37,6 +38,7 @@ import { PushService } from "./push/service.js";
 import { FlightAlerts } from "./alerts/engine.js";
 import { EMPTY_EXTRAS, type SimExtras } from "./sim/source.js";
 import { PmdgPanel } from "./pmdg/pmdg-panel.js";
+import { MockCdu } from "./pmdg/mock-cdu.js";
 import { PauseScheduler } from "./sim/pause-scheduler.js";
 import { PanelService } from "./panel/service.js";
 import { SimPanel } from "./panel/sim-panel.js";
@@ -48,7 +50,11 @@ import { SimConnectSource } from "./sim/simconnect-source.js";
 import type { SimSource } from "./sim/source.js";
 import { VERSION } from "./version.js";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { rankLanAddresses } from "./lan.js";
+import { MockCapture, NoCapture, WindowsCapture } from "./simview/capture.js";
+import { ChasePlaneClient, MockChasePlane } from "./chaseplane/client.js";
+import { Updater, windowsLaunch } from "./update/updater.js";
 
 const log = logger("bridge");
 
@@ -118,6 +124,19 @@ async function main() {
   source.onSample((t, at) => analyzer.ingest(t, at));
   source.onExtras((x) => analyzer.setExtras(x));
   let lastTitle = "";
+  // Updates (as Cobalt's bridge: 6-hourly, downloads wait while the simulator is connected).
+  const updater = new Updater({
+    current: VERSION,
+    edition: cfg.edition,
+    packaged: cfg.packaged && !cfg.mock,
+    disabled: cfg.noUpdates,
+    dir: cfg.dataDir,
+    repo: cfg.updateRepo,
+    simConnected: () => source.status().connected,
+    log: logger("update"),
+    launch: process.platform === "win32" ? windowsLaunch : undefined,
+  });
+  source.onStatus(() => updater.simChanged());
   source.onStatus((s) => {
     if (!s.connected) {
       analyzer.reset();
@@ -167,12 +186,14 @@ async function main() {
   }
 
   // Cockpit control: the Fenix FCU (or a pretend one with the mock flight), only for paired devices and this PC.
-  let cockpit: CockpitService | null = null;
+  let cockpit: CockpitHub | null = null;
+  let fenixCockpit: CockpitService | null = null;
   let pairing: Pairing | null = null;
   if (cfg.control) {
     const cLog = logger("cockpit");
     const backend = source instanceof SimConnectSource ? new FenixSim(source, cLog) : new MockCockpit();
-    cockpit = new CockpitService(backend, cLog);
+    fenixCockpit = new CockpitService(backend, cLog);
+    cockpit = fenixCockpit;
     // The Fenix keeps its own autopilot: its AP1/AP2 lights count as "autopilot on" in the live data.
     hub.setApOverride(() => {
       const v = backend.values();
@@ -254,8 +275,12 @@ async function main() {
   }
   // Lights and autopilot. PMDG 737 / 777 are driven from their own SDK data and events (the header is found in the aircraft's package, or in the `sdk` folder);
   // everything else goes through the standard events and the add-on profiles in panel/addons.ts.
-  const panelBackend = source instanceof SimConnectSource ? new PmdgPanel(source, new SimPanel(source), logger("pmdg"), { sdkDirs: [join(process.cwd(), "sdk")] }) : new MockPanel(cfg.mockAircraft);
+  const simPanel = source instanceof SimConnectSource ? new SimPanel(source) : null;
+  // The iniBuilds A340 / A350 / A380 get the same FCU screen as the Fenix, through their input events.
+  if (fenixCockpit && simPanel) cockpit = new CombinedCockpit(fenixCockpit, simPanel);
+  const panelBackend = source instanceof SimConnectSource && simPanel ? new PmdgPanel(source, simPanel, logger("pmdg"), { sdkDirs: [join(process.cwd(), "sdk"), fileURLToPath(new URL("../../../sdk", import.meta.url)), ...(cfg.dataDir ? [join(cfg.dataDir, "sdk")] : [])] }) : new MockPanel(cfg.mockAircraft);
   const panel = new PanelService(panelBackend, logger("panel"));
+  const cdu = panelBackend instanceof PmdgPanel ? panelBackend : new MockCdu();
   const systems = source instanceof SimConnectSource ? new SimSystems(source, logger("systems")) : new MockSystems();
   // A scheduled pause is kept on the PC so it still happens when the phone is away. The top-of-descent estimate comes from the plan.
   const pauser = new PauseScheduler({
@@ -323,6 +348,7 @@ async function main() {
       dataDir: cfg.dataDir,
       host: { autostart: autostartState(), plugin: pluginState(), canReconnect: source instanceof SimConnectSource },
       pause: pauser.status(),
+      update: updater.state(),
     };
   };
   const consoleAct = (action: ConsoleAction, body: Record<string, unknown>): string | void | Promise<string | void> => {
@@ -347,6 +373,10 @@ async function main() {
       const err = installPlugin();
       if (!err) log.info("vPilot plugin installed from the VBuddy window. Restart vPilot to load it.");
       return err ?? undefined;
+    } else if (action === "updateCheck") {
+      return updater.check("manual").then((st) => (st.status.kind === "error" ? st.text : undefined));
+    } else if (action === "updateInstall") {
+      return updater.install();
     } else if (action === "reconnectSim") {
       if (source instanceof SimConnectSource) source.reconnectNow();
       else return "There is no simulator connection to restart in a test flight.";
@@ -363,7 +393,7 @@ async function main() {
   };
 
   try {
-    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir });
+    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: cfg.mock ? new MockCapture() : process.platform === "win32" ? new WindowsCapture(logger("simview")) : new NoCapture(), network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EADDRINUSE") log.error(`Port ${cfg.port} is already in use. Is another bridge running? Use --port to pick another.`);
@@ -372,6 +402,7 @@ async function main() {
   }
 
   if (relayOn) relayClient.start();
+  updater.start();
 
   acars.start();
   comms.onState(() => acars.changed());

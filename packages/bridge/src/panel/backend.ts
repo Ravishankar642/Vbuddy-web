@@ -11,6 +11,8 @@ export interface PanelBackend {
   press(ctl: ApButton): Promise<PanelResult>;
   /** Dial a window to an absolute value (knots or Mach for spd). */
   set(ctl: ApKnob, value: number): Promise<PanelResult>;
+  /** Airbus FCU knob push (managed) / pull (selected). */
+  fcu?(ctl: "spd" | "hdg" | "alt" | "vs", action: "push" | "pull"): Promise<PanelResult>;
   /** Aircraft systems and simulator controls (flaps, gear, pause, ...). */
   sys(id: SysId, value?: number): Promise<PanelResult>;
 }

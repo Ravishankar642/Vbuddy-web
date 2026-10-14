@@ -240,6 +240,8 @@ export function CockpitView({ b }: { b: BridgeSnapshot }) {
   );
   const p = b.panel;
   const panelEnabled = !!p?.aircraft && !!b.control?.allowed && b.link === "open";
+  // A study airliner ignores outside commands to its own cockpit; the simulator's controls (pause, view...) still work.
+  const cockpitEnabled = panelEnabled && !p?.readOnly;
   const s = p?.family === "boeing" ? null : b.cockpit; // a Boeing has no Airbus FCU
   const c = b.control;
   const enabled = !!s && !!c?.allowed && b.link === "open" && s.power;
@@ -264,16 +266,17 @@ export function CockpitView({ b }: { b: BridgeSnapshot }) {
             <span className="chip">{p!.family === "airbus" ? "Airbus" : p!.family === "boeing" ? "Boeing" : "Other aircraft"}</span>
             {c?.reason === "paired" && <span className="chip">Paired as {c.deviceName}</span>}
           </div>
-          {p!.note && <p className="banner">{p!.note}</p>}
+          {p!.readOnly && <p className="banner">{p!.readOnly}</p>}
+          {p!.note && !p!.readOnly && <p className="banner">{p!.note}</p>}
           {p!.ap ? (
-            <Mcp ap={p!.ap} enabled={panelEnabled} run={runPanel} generic={p!.family !== "boeing"} />
+            <Mcp ap={p!.ap} enabled={cockpitEnabled} run={runPanel} generic={p!.family !== "boeing"} airbus={p!.family === "airbus"} />
           ) : (
             <div className="empty">
               <p className="empty__big">This aircraft isn't reporting its autopilot</p>
               <p>The lights below still work. Autopilot controls need the aircraft to publish its autopilot to the simulator.</p>
             </div>
           )}
-          <LightsCard p={p!} enabled={panelEnabled} run={runPanel} />
+          <LightsCard p={p!} enabled={cockpitEnabled} run={runPanel} />
           <SystemsCard p={p!} enabled={panelEnabled} run={runPanel} />
           <div className="cockpit__err" aria-live="assertive">
             {error && <p className="banner">{error}</p>}
@@ -293,8 +296,8 @@ export function CockpitView({ b }: { b: BridgeSnapshot }) {
             {c?.reason === "paired" && <span className="chip">Paired as {c.deviceName}</span>}
           </div>
           {c?.detail && <p className="banner">{c.detail}</p>}
-          <div className={`fcu${s.power ? "" : " fcu--off"}`}>
-            <Efis s={s} enabled={enabled} run={run} />
+          <div className={`fcu${s.power ? "" : " fcu--off"}${s.aircraft === "inibuilds" ? " fcu--noefis" : ""}`}>
+            {s.aircraft !== "inibuilds" && <Efis s={s} enabled={enabled} run={run} />}
             <div className="fcu__main">
               <FcuModule
                 id="spd"
@@ -361,7 +364,8 @@ export function CockpitView({ b }: { b: BridgeSnapshot }) {
             {!s.power && <p className="fcu__nopower">The FCU has no power.</p>}
           </div>
           <p className="muted cockpit__help">
-            Knobs: tap the left half to turn down one click, the right half to turn up, hold to keep turning, or drag round the knob. Tap a window to type an exact value. Controls with a dotted outline haven't been confirmed on your Fenix yet.
+            Knobs: tap the left half to turn down one click, the right half to turn up, hold to keep turning, or drag round the knob. Tap a window to type an exact value.{" "}
+            {s.aircraft === "inibuilds" ? "On the iniBuilds aircraft the lights here follow what the aircraft reports to the simulator, so some may stay dark." : "Controls with a dotted outline haven't been confirmed on your Fenix yet."}
           </p>
           {p?.aircraft && <LightsCard p={p} enabled={panelEnabled} run={runPanel} />}
           {p?.aircraft && <SystemsCard p={p} enabled={panelEnabled} run={runPanel} />}

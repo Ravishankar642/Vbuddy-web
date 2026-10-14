@@ -43,7 +43,7 @@ export type CockpitCommand = z.infer<typeof CockpitCommandSchema>;
 
 /** What the Fenix FCU and captain's EFIS show. Values are what the windows display. */
 export const FcuStateSchema = z.object({
-  aircraft: z.enum(["fenix-a320", "mock"]),
+  aircraft: z.enum(["fenix-a320", "inibuilds", "mock"]),
   power: z.boolean(),
   spd: z.number(), // knots, or Mach (e.g. 0.78) when spdIsMach
   spdIsMach: z.boolean(),

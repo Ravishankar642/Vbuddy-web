@@ -26,6 +26,7 @@ export const SYS_IDS = [
   "gear", // value 1 = down, 0 = up
   "parkingBrake", // value 1 = set, 0 = release
   "engines", // value 1 = start all, 0 = shut down all
+  "engine", // value n = start engine n (1-4), -n = shut it down (fuel valve + starter, as Cobalt)
   "apu", // value 1 = start, 0 = off
   "pitotHeat", // value 1 = on, 0 = off
   "seatbelts", // value 1 = on, 0 = off
@@ -69,6 +70,8 @@ export const PanelCommandSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("press"), ctl: ApButtonSchema }),
   /** Turn a knob by detents (+ = clockwise): 1 kt/Mach 0.01, 1 deg, 100 ft, 100 fpm. */
   z.object({ op: z.literal("turn"), ctl: ApKnobSchema, steps: z.number().int().min(-60).max(60).refine((n) => n !== 0) }),
+  /** Airbus FCU knob: push (managed) or pull (selected). */
+  z.object({ op: z.literal("fcu"), ctl: z.enum(["spd", "hdg", "alt", "vs"]), action: z.enum(["push", "pull"]) }),
   /** Dial a window to an exact value. */
   z.object({ op: z.literal("set"), ctl: ApKnobSchema, value: z.number().min(-10000).max(60000) }),
 ]);
@@ -100,10 +103,18 @@ export const PanelStateSchema = z.object({
       alt: z.number(),
       vsFpm: z.number(),
       crs: z.number(),
+      /** False when the aircraft's autopilot panel has no course knob (the 777's MCP, every Airbus FCU). */
+      hasCrs: z.boolean().optional(),
+      /** Airbus FCU managed dots (true = managed), when the aircraft reports them. */
+      managed: z.object({ spd: z.boolean(), hdg: z.boolean(), alt: z.boolean() }).optional(),
     })
     .nullable(),
   /** Short note for the pilot, e.g. "this aircraft ignored the last command". */
   note: z.string().nullable(),
+  /** The aircraft's CDUs that VBuddy can show (PMDG 737: 2, PMDG 777: 3); absent when it has none it can reach. */
+  cdu: z.object({ sides: z.number().int().min(1).max(3) }).nullable().optional(),
+  /** Set when the aircraft keeps its cockpit private, so outside commands can't operate it: says why. */
+  readOnly: z.string().nullable().optional(),
   /** Aircraft systems and simulator state as the simulator reports it. Absent on older bridges. */
   sys: z
     .object({
@@ -114,6 +125,8 @@ export const PanelStateSchema = z.object({
       parkingBrake: z.boolean(),
       enginesRunning: z.number(),
       engineCount: z.number(),
+      /** Which engines are running, engine 1 first. */
+      engines: z.array(z.boolean()).optional(),
       apuOn: z.boolean(),
       pitotHeat: z.boolean(),
       seatbelts: z.boolean(),

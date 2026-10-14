@@ -25,3 +25,6 @@ PMDG, Fenix, iniBuilds, iFly, FSLabs and other add-on names are trademarks of th
 - **Esri World Dark Gray Canvas** map tiles: © Esri and its data providers, used under Esri's terms of use. The map shows the required attribution.
 
 If a service changes its terms, check the current ones.
+
+## ComSpotter (protocol reference only, no code copied)
+The ChasePlane connection follows the message format used by ComSpotter, https://github.com/sw-jannik/comspotter, Copyright (c) 2026 Jannik Reichenau, MIT License. ChasePlane is a product of Parallel 42; VBuddy is not affiliated with it.

@@ -1,7 +1,48 @@
 # Changelog
 
+## 1.1.0
+
+- **iniBuilds A340 / A350 / A380 get the Fenix-style FCU screen** under Controls (knobs, windows, push/pull, AP1/AP2, A/THR, LOC, APPR, SPD/MACH, HDG-V/S TRK-FPA, METRIC, FD), driven through the aircraft's input events. No EFIS column (its baro and ND aren't wired yet).
+- **iniBuilds buttons and push/pull are pressed once:** VBuddy now reads where each button's input event rests and changes it once, instead of "1 then 0", which on buttons resting at 1 was a double press (APPR armed and disarmed again) and on others did nothing.
+- **iniBuilds V/S window follows the aircraft:** the A350 keeps its V/S in one of the slot variables (AUTOPILOT VERTICAL HOLD VAR:1-3); VBuddy shows whichever one moves.
+
+- **iniBuilds A340, A350 and A380 controls:** the FCU buttons (AP, FD, A/THR, LOC, APPR), knob turns and push/pull, and the exterior lights now go through the aircraft's own input events (AIRLINER_FCU_* / AIRLINER_MCU_* / AIRLINER_LIGHTS_EXT_*, as found in the aircraft scans) instead of the standard events these aircraft ignore. Which way and how far a knob moves per step is learned on first use by watching the window. The Airbus FCU in the app gains a LOC button.
+- **The aircraft's input-event list is asked for again until it arrives:** right after an aircraft loads, SimConnect often refuses the list ("ERROR ... list of the aircraft's input events" in the log), and VBuddy never asked again, so input-event aircraft (iniBuilds, iFly) got no controls.
+
+- **PMDG 737 and 777 CDU in the app (Systems → CDU):** the CDU screen as the aircraft draws it (colours, small font, reverse video), the line select keys beside their lines, the function keys, numbers and letters, the EXEC light and MSG/OFST/FAIL/CALL (DSPY on the 777) lights. Left and right CDU (and centre on the 777). Type into the scratchpad from the phone keyboard, or a computer keyboard (Backspace = CLR, Enter = EXEC). Read the way PMDG's own CDU sample reads it; keys are pressed and released like PMDG's sample presses a switch. Needs `EnableCDUBroadcast.0=1` and `.1=1` (and `.2=1` on the 777) under [SDK] in the aircraft's options .ini; the app says so if they're missing.
+
+- **Airbus aircraft get an Airbus FCU in Controls:** SPD/MACH, HDG, ALT and V/S windows with push/pull, and FD, AP, A/THR and APPR buttons, instead of the Boeing MCP buttons. No course window on an Airbus or on the PMDG 777 (neither has a course knob).
+- **Study airliners say plainly that they can't be operated from outside:** the FSLabs A321neo (and ToLiss, iniBuilds A300/A310) keep their cockpit private; Cobalt can't operate them either. Their autopilot and light controls are switched off with that explanation, while the simulator controls (pause, view, flaps etc.) stay available.
+
+- **PMDG MCP windows are set directly:** speed, Mach, heading, altitude, vertical speed and course now use the SDK's own "set" events (EVT_MCP_HDG_SET and friends), so the value lands exactly where it was asked instead of overshooting or creeping back. Turning the knob is kept as a fallback, and it now waits for the aircraft's data to catch up before counting clicks.
+
+- **PMDG knobs and buttons click the way PMDG's sample does:** MCP knobs now turn with the mouse wheel (as PMDG_NG3_ConnectionTest.cpp slews the heading selector) and buttons send the press and then the release. VBuddy also finds the SDK files in the source folder's `sdk` folder, and when it can't find them the app says to copy them into %APPDATA%\VBuddy\sdk.
+
+- **PMDG 737 / 777 controls follow PMDG's own SDK sample:** events are now sent the way PMDG_NG3_ConnectionTest.cpp sends them ("#<event number>" at the highest priority with GROUPID_IS_PRIORITY), instead of writing PMDG's control area without waiting for it to clear (which could lose knob clicks). The aircraft's data is read as one block, as in PMDG's sample. The simulator's standard events are sent at the highest priority too (as PMDG's sample and Cobalt do). The 737's landing lights (L/R RETRACT and FIXED) are found, the 777's missing course knob is no longer reported (it has none), and VBuddy also looks for the SDK files in %APPDATA%\VBuddy\sdk.
+
 ## 1.0.0
 First release.
+
+- **More aircraft controls from Cobalt** (second pass, every control function in Cobalt Bridge 1.2.5 listed with REA and compared):
+  - Airbus FCU knobs can be pushed (managed) and pulled (selected) from the autopilot panel: FlyByWire with its own FCU events, the default A320neo with the simulator's slot-index events, the Fenix with its knob counters; each is checked against the managed dot.
+  - FlyByWire: AP1, A/THR, LOC and APPR lights and the managed dots are read from FlyByWire's own FCU (it doesn't copy them into the standard variables), so buttons now confirm properly.
+  - Setting speed, heading or V/S first selects the knob (as Cobalt does), so an Airbus in managed mode accepts the new value.
+  - Negative values (V/S -1500) are sent the way SimConnect expects; before, they could fail to send.
+
+- **Aircraft controls work the way Cobalt's do** (taken from Cobalt Bridge 1.2.5's own control tables, nothing invented):
+  - Fenix A320: lights (beacon, strobe, nav/logo, landing, nose/taxi), seat belts, probe heat, parking brake, speed brake arm and APU (master, then START after 1.5 s) now move the Fenix's own overhead switches instead of the simulator's standard events, and the Systems page shows the Fenix's real switch positions. Each switch is read back to confirm it moved.
+  - Fenix FCU: written directly through SimConnect first (MSFS 2020 SU12 and later, MSFS 2024), with MobiFlight only as the fallback for older simulator builds.
+  - Fenix radios: COM frequencies are dialled on the Fenix radio panel itself (outer knob 1 MHz a click, inner knob one channel a click, 8.33 or 25 kHz spacing worked out from the first click), and transfer presses the panel's XFER key. The Fenix ignores the simulator's frequency events.
+  - Aircraft are recognised in Cobalt's order; the default A320neo (Asobo and iniBuilds' version for MSFS 2024) uses the standard events; study airliners (iniBuilds A300/A310, ToLiss, FSLabs) now say plainly that values must be set on their FCU.
+  - FlyByWire LVL CHG pushes the FCU altitude knob; iFly 737 MAX buttons use Cobalt's input-event names.
+  - Engines can be started and stopped one at a time (fuel valve and starter) under Systems.
+  None of this has been tried in the real simulator yet.
+
+- **Automatic updates:** VBuddy checks for a new version when it starts and every 6 hours, downloads it in the background (but waits while the simulator is running, so it never competes with scenery streaming), checks the download against the release's SHA-256 list, and shows it under Settings → Updates in the VBuddy window with what's new. Install update asks Windows for permission, updates silently and starts VBuddy again. The home network edition gets the home network installer. Turn checks off with VBUDDY_NO_UPDATES=1. Updates come from the releases of github.com/Ravishankar642/Vbuddy-web. Based on how Cobalt's bridge updates itself.
+
+- **ChasePlane views from your phone:** the Sim view page lists the views you saved in ChasePlane (your aircraft's views, and the airport views where you are) as buttons; tap one and the simulator switches to it. VBuddy talks to ChasePlane's own local connection on this PC (port 8652), the same way the open-source ComSpotter tool does (github.com/sw-jannik/comspotter, MIT), so there are no shortcuts to set up. Needs ChasePlane for MSFS 2024 running. Not yet tried with a real ChasePlane.
+
+- **Live sim view (Systems → Sim view):** see the simulator window on your phone or tablet, about three pictures a second, at home or through the cloud relay, with the camera buttons (cockpit, outside, drone, look around, zoom) underneath. Works the way Cobalt's sim view does: the PC only captures while someone is watching, skips a picture if the previous one isn't finished, sends at most 1024 x 576 (JPEG quality 55), and drops pictures for a phone whose connection can't keep up instead of queueing them. Only this PC and paired devices can watch. Unlike Cobalt it never shows your whole screen when the simulator window isn't found; it says so instead. On mobile data it uses roughly 10-20 MB a minute. Not yet tried on a real MSFS window.
 
 - **The installer opens the port by itself:** it always opens TCP 4789 in Windows Firewall for every network type (home Wi-Fi is often set to Public), allows VBuddy's own node.exe, and removes any earlier Block rule for it. The firewall tick box is gone.
 - **Two editions of the installer:** `pnpm package:both` makes `VBuddy-Setup-<version>.exe` (with the Cloud relay switch for use away from home) and `VBuddy-Local-Setup-<version>.exe` (home network edition: no relay at all, the switch is hidden, the PC never connects to any VBuddy server, phones connect on the same Wi-Fi). Use `pnpm package:local` for the home edition alone. Installing one over the other switches editions and keeps your flights and settings.

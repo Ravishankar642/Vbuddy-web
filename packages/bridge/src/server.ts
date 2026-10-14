@@ -1,3 +1,4 @@
+import type { CduSource } from "./pmdg/pmdg-panel.js";
 import { envelope, type FlightAlert, parseClientMessage, PLUGIN_PATH, PluginToBridgeSchema, WS_PATH, type ServerMessageBody } from "@vbuddy/protocol";
 import type { BriefingService } from "./briefing/service.js";
 import type { HoppieService } from "./acars/hoppie.js";
@@ -21,6 +22,9 @@ import type { AtlasService } from "./atlas/atlas.js";
 import type { LogEntry } from "./log.js";
 import type { LegBook } from "./db/legs.js";
 import type { EfbProxy } from "./efb/proxy.js";
+import type { FrameSource } from "./simview/capture.js";
+import { SimViewFeed } from "./simview/feed.js";
+import type { ChasePlaneLink } from "./chaseplane/client.js";
 import type { PushService } from "./push/service.js";
 import { RELAY_REMOTE_HEADER, RELAY_TAG_HEADER } from "./relay/relay-client.js";
 import { VERSION } from "./version.js";
@@ -49,6 +53,12 @@ interface Client {
   /** Relayed and not paired: may only pair until it is. */
   locked: boolean;
   resume: { sessionId: string; lastSeq: number } | undefined;
+  /** Watching the live sim view. */
+  simView?: boolean;
+  /** Watching this PMDG CDU (0 left, 1 right, 2 centre). */
+  cdu?: number;
+  /** The last CDU screen sent to it (JSON), so unchanged screens aren't sent again. */
+  cduSent?: string;
 }
 
 const NETWORK_OFF = { network: "off", state: "off", updatedAt: null, boundaries: false } as const;
@@ -66,7 +76,7 @@ export interface ConsoleHooks {
   /** The latest log lines, for the Activity page. */
   activity(): LogEntry[];
 }
-export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause";
+export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall";
 
 export interface RelayServerOptions {
   /** Random per run; the relay client sends it so requests through the relay can be told from loopback ones. */
@@ -77,7 +87,7 @@ export interface RelayServerOptions {
   id?: string;
 }
 
-export function startServer(opts: { console?: ConsoleHooks | null; briefing?: BriefingService | null; acars?: HoppieService | null; flightAlerts?: { onAlert(cb: (a: FlightAlert) => void): void } | null; panel?: PanelService | null; systems?: SystemsSource | null; legs?: LegBook | null; atlas?: AtlasService | null; efb?: EfbProxy | null; efbPort?: number; comms?: CommsService | null; relay?: RelayServerOptions | null; push?: PushService | null; hub: TelemetryHub; landings: LandingStore; history?: FlightHistory | null; network?: NetworkHub | null; cockpit?: CockpitHub | null; pairing?: Pairing | null; host: string; port: number; webDir: string | null }): Promise<BridgeServer> {
+export function startServer(opts: { console?: ConsoleHooks | null; briefing?: BriefingService | null; acars?: HoppieService | null; flightAlerts?: { onAlert(cb: (a: FlightAlert) => void): void } | null; panel?: PanelService | null; cdu?: CduSource | null; systems?: SystemsSource | null; legs?: LegBook | null; atlas?: AtlasService | null; efb?: EfbProxy | null; efbPort?: number; simView?: FrameSource | null; chasePlane?: ChasePlaneLink | null; comms?: CommsService | null; relay?: RelayServerOptions | null; push?: PushService | null; hub: TelemetryHub; landings: LandingStore; history?: FlightHistory | null; network?: NetworkHub | null; cockpit?: CockpitHub | null; pairing?: Pairing | null; host: string; port: number; webDir: string | null }): Promise<BridgeServer> {
   const { hub, landings } = opts;
   const history = opts.history ?? null;
   const legs = opts.legs ?? null;
@@ -113,6 +123,48 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
   };
   /** DMs and radio calls are private: only the bridge PC and paired devices see them. */
   const trusted = (c: Client) => c.local || !!c.device;
+
+  // Live sim view (Cobalt's camera feed): frames only to paired devices and this PC that asked for them.
+  // A frame is dropped for a viewer whose connection hasn't drained (a newer one follows in a third of a second).
+  const SIM_VIEW_BACKLOG = 512 * 1024;
+  const simViewers = () => [...clients].filter((c) => c.simView && trusted(c));
+  const simView = opts.simView
+    ? new SimViewFeed(
+        opts.simView,
+        (f) => {
+          const payload = JSON.stringify(envelope({ t: "simViewFrame", ...f }));
+          for (const c of simViewers()) if (c.ws.readyState === WebSocket.OPEN && c.ws.bufferedAmount < SIM_VIEW_BACKLOG) c.ws.send(payload);
+        },
+        (state, message) => {
+          for (const c of simViewers()) send(c.ws, { t: "simViewStatus", state, ...(message ? { message } : {}) });
+        },
+        log,
+      )
+    : null;
+  const recountSimView = () => simView?.setViewers(simViewers().length);
+
+  // PMDG CDU screens: to paired devices and this PC watching that CDU, whenever the screen changes (at most 10/s), and
+  // once a second in case only the message changed (e.g. the broadcast is off).
+  const cduSrc = opts.cdu ?? null;
+  const sendCdu = (c: Client) => {
+    if (!cduSrc || c.cdu === undefined || !trusted(c)) return;
+    const screen = cduSrc.screen(c.cdu);
+    const json = JSON.stringify(screen);
+    if (json === c.cduSent) return;
+    c.cduSent = json;
+    send(c.ws, { t: "cdu", side: c.cdu, screen });
+  };
+  if (cduSrc) {
+    cduSrc.onCdu((side) => {
+      for (const c of clients) if (c.cdu === side) sendCdu(c);
+    });
+  }
+  const cduTick = cduSrc
+    ? setInterval(() => {
+        for (const c of clients) if (c.cdu !== undefined) sendCdu(c);
+      }, 1000)
+    : null;
+  cduTick?.unref?.();
   const sendComms = (c: Client) => {
     if (!comms) return;
     send(c.ws, { t: "commsState", state: comms.state() });
@@ -234,7 +286,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       if (!consoleHooks || !isConsoleCaller(req)) return json(res, 404, { error: "not found" });
       if (url === "/api/console" && req.method === "GET") return json(res, 200, consoleHooks.info());
       if (url === "/api/console/activity" && req.method === "GET") return json(res, 200, consoleHooks.activity());
-      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause)$/.exec(url);
+      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall)$/.exec(url);
       if (m && req.method === "POST" && req.headers["x-vbuddy-console"] === "1") {
         let raw = "";
         for await (const chunk of req) {
@@ -503,6 +555,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
           for (const c of [...clients]) {
             if (c.device?.id !== msg.id) continue;
             c.device = null;
+            if (c.simView) queueMicrotask(recountSimView);
             if (c.relayed && relayOpt?.access === "paired") c.ws.close(4003, "removed");
             else {
               sendCockpit(c);
@@ -535,6 +588,49 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
         } else {
           const r = legs.run(msg.cmd);
           send(ws, { t: "legResult", id, ...r });
+        }
+      } else if (msg.t === "chaseCmd") {
+        const id = msg.id;
+        const cp = opts.chasePlane;
+        if (!cp) send(ws, { t: "chaseResult", id, ok: false, error: "ChasePlane isn't available on this bridge." });
+        else if (!trusted(client)) send(ws, { t: "chaseResult", id, ok: false, error: "Pair this device first (Systems → Controls)." });
+        else if (msg.cmd.op === "views") {
+          void cp.views().then(
+            (r) => send(ws, { t: "chaseResult", id, ok: true, views: r.views.slice(0, 2000), airport: r.airport }),
+            (e: Error) => send(ws, { t: "chaseResult", id, ok: false, error: e.message }),
+          );
+        } else {
+          void cp.setView(msg.cmd.guid).then(
+            () => send(ws, { t: "chaseResult", id, ok: true }),
+            (e: Error) => send(ws, { t: "chaseResult", id, ok: false, error: e.message }),
+          );
+        }
+      } else if (msg.t === "cduView") {
+        if (!msg.on) client.cdu = undefined;
+        else if (!cduSrc) send(ws, { t: "cdu", side: msg.side, screen: null });
+        else if (!trusted(client)) send(ws, { t: "cduResult", ok: false, error: "Pair this device first (Systems → Controls) to use the CDU." });
+        else {
+          client.cdu = msg.side;
+          client.cduSent = undefined;
+          sendCdu(client);
+        }
+      } else if (msg.t === "cduKey") {
+        if (!cduSrc) send(ws, { t: "cduResult", ok: false, error: "There is no CDU on this bridge." });
+        else if (!trusted(client)) send(ws, { t: "cduResult", ok: false, error: "Pair this device first (Systems → Controls)." });
+        else
+          void cduSrc.key(msg.side, msg.key).then((r) => {
+            if (!r.ok) send(ws, { t: "cduResult", ok: false, error: r.error });
+          });
+      } else if (msg.t === "simView") {
+        if (!simView) send(ws, { t: "simViewStatus", state: "unavailable", message: "The sim view isn't available on this bridge." });
+        else if (msg.on && !trusted(client)) send(ws, { t: "simViewStatus", state: "not-allowed", message: "Pair this device first (Systems → Controls) to see the sim." });
+        else {
+          client.simView = msg.on;
+          recountSimView();
+          if (msg.on) {
+            const st = simView.status();
+            send(ws, { t: "simViewStatus", state: st.state, ...(st.message ? { message: st.message } : {}) });
+          }
         }
       } else if (msg.t === "panelCmd") {
         const id = msg.id;
@@ -577,6 +673,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       clearTimeout(helloTimer);
       if (client) pending.delete(client);
       if (client && clients.delete(client)) log.info(`${client.name} (${addr}) disconnected - ${clients.size} client(s)`);
+      if (client?.simView) recountSimView();
     });
     ws.on("error", (e) => log.debug(`socket error from ${addr}: ${e.message}`));
   });
@@ -648,6 +745,8 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
   });
 
   const heartbeat = setInterval(() => {
+    // A device forgotten from the VBuddy window stops counting as a viewer.
+    recountSimView();
     for (const c of [...clients, ...pending]) {
       if (!c.alive) {
         log.info(`${c.name} stopped responding; dropping it`);
@@ -671,7 +770,10 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
         close: () =>
           new Promise<void>((done) => {
             clearInterval(heartbeat);
+            simView?.stop();
+            opts.chasePlane?.close();
             if (pairingTimer) clearInterval(pairingTimer);
+            if (cduTick) clearInterval(cduTick);
             pairing?.flush();
             for (const c of [...clients, ...pending]) c.ws.close(1001, "bridge shutting down");
             wss.close();

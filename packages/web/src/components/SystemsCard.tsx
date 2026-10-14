@@ -18,6 +18,7 @@ export function SystemsCard({ p, enabled, run }: { p: PanelState; enabled: boole
   const s = p.sys;
   const [baro, setBaro] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [stopOne, setStopOne] = useState<number | null>(null);
   const stopTimer = useRef<number | null>(null);
   useEffect(() => () => void (stopTimer.current && clearTimeout(stopTimer.current)), []);
   if (!s) return null;
@@ -47,6 +48,29 @@ export function SystemsCard({ p, enabled, run }: { p: PanelState; enabled: boole
         <PanelButton label="PITOT HEAT" lit={s.pitotHeat} disabled={!enabled} onPress={() => sys("pitotHeat", s.pitotHeat ? 0 : 1)} />
         <PanelButton label="SEAT BELTS" lit={s.seatbelts} disabled={!enabled} onPress={() => sys("seatbelts", s.seatbelts ? 0 : 1)} />
       </div>
+
+      {s.engineCount > 1 && s.engines && (
+        <div className="systems__grid" role="group" aria-label="Engines one at a time">
+          {s.engines.map((on, i) => (
+            <PanelButton
+              key={i}
+              label={stopOne === i ? `TAP AGAIN: STOP ENG ${i + 1}` : on ? `ENG ${i + 1} RUNNING` : `START ENG ${i + 1}`}
+              lit={on}
+              disabled={!enabled}
+              onPress={() => {
+                if (!on) return sys("engine", i + 1);
+                if (stopOne !== i) {
+                  setStopOne(i);
+                  window.setTimeout(() => setStopOne((x) => (x === i ? null : x)), 3000);
+                  return;
+                }
+                setStopOne(null);
+                sys("engine", -(i + 1));
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="systems__row">
         <div className="systems__group" role="group" aria-label="Flaps">

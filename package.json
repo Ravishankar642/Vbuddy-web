@@ -1,7 +1,7 @@
 {
   "name": "vbuddy-webapp",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "VBuddy: open-source flight simulator companion (bridge + web client)",
   "license": "GPL-3.0-or-later",
   "packageManager": "pnpm@10.28.0",
@@ -23,7 +23,9 @@
     "dev:mock-quick": "pnpm --filter @vbuddy/protocol build && pnpm --parallel --filter @vbuddy/bridge --filter @vbuddy/web dev:mock-quick",
     "package": "node scripts/package.mjs",
     "package:local": "node scripts/package.mjs --edition local",
-    "package:both": "node scripts/package.mjs --edition both"
+    "package:both": "node scripts/package.mjs --edition both",
+    "version:set": "node scripts/set-version.mjs",
+    "release:publish": "node scripts/publish-release.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

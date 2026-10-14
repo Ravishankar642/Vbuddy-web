@@ -74,11 +74,72 @@ const BUTTONS: Array<[ApButton, string, keyof Ap]> = [
  * the default Boeings use; add-ons such as PMDG and iFly keep their own, so the bridge checks every press and the
  * panel says so when the aircraft ignores it.
  */
-export function Mcp({ ap, enabled, run, generic }: { ap: Ap; enabled: boolean; run: Run; generic: boolean }) {
+const FCU_KNOBS: Array<["spd" | "hdg" | "alt" | "vs", string]> = [
+  ["spd", "SPD"],
+  ["hdg", "HDG"],
+  ["alt", "ALT"],
+  ["vs", "V/S"],
+];
+/** Airbus FCU knobs: push for managed, pull for selected (the dot shows managed when the aircraft reports it). */
+function FcuPushPull({ ap, enabled, run }: { ap: Ap; enabled: boolean; run: Run }) {
+  return (
+    <div className="fcu-pp" role="group" aria-label="FCU knobs: push for managed, pull for selected">
+      {FCU_KNOBS.map(([ctl, label]) => {
+        const dot = ctl === "vs" ? undefined : ap.managed?.[ctl];
+        return (
+          <div key={ctl} className="fcu-pp__knob">
+            <span className="fcu-pp__label">
+              {label}
+              {dot !== undefined && <span className={`fcu-pp__dot${dot ? " is-on" : ""}`} aria-label={dot ? "managed" : "selected"} />}
+            </span>
+            <button type="button" className="btn" disabled={!enabled} onClick={() => void run({ op: "fcu", ctl, action: "push" })}>
+              Push
+            </button>
+            <button type="button" className="btn" disabled={!enabled} onClick={() => void run({ op: "fcu", ctl, action: "pull" })}>
+              Pull
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Airbus FCU buttons, mapped onto the panel's button ids (AP = cmd, LOC = lnav, APPR = app). */
+const AIRBUS_BUTTONS: Array<[ApButton, string, keyof Ap]> = [
+  ["fd", "FD", "fd"],
+  ["cmd", "AP", "master"],
+  ["athr", "A/THR", "athr"],
+  ["lnav", "LOC", "lnav"],
+  ["app", "APPR", "app"],
+];
+
+/** An Airbus FCU: speed, heading, altitude and V/S windows with push/pull, and the FCU's own buttons. No course knob. */
+function AirbusFcu({ ap, enabled, run }: { ap: Ap; enabled: boolean; run: Run }) {
+  return (
+    <section className="mcp" aria-label="Flight control unit">
+      <div className="mcp__row">
+        <McpWindow id="spd" label={ap.machMode ? "MACH" : "SPD"} text={spdText(ap)} hint={ap.machMode ? "e.g. 0.78" : "e.g. 250"} enabled={enabled} run={run} />
+        <McpWindow id="hdg" label="HDG" text={degText(ap.hdg)} hint="e.g. 270" enabled={enabled} run={run} />
+        <McpWindow id="alt" label="ALT" text={altText(ap)} hint="e.g. 12000 or FL350" enabled={enabled} run={run} />
+        <McpWindow id="vs" label="V/S" text={vsText(ap)} hint="e.g. -1500" enabled={enabled} run={run} />
+      </div>
+      <FcuPushPull ap={ap} enabled={enabled} run={run} />
+      <div className="mcp__buttons" role="group" aria-label="FCU buttons">
+        {AIRBUS_BUTTONS.map(([ctl, label, flag]) => (
+          <PanelButton key={ctl} label={label} lit={ap[flag] as boolean} disabled={!enabled} onPress={() => void run({ op: "press", ctl })} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function Mcp({ ap, enabled, run, generic, airbus = false }: { ap: Ap; enabled: boolean; run: Run; generic: boolean; airbus?: boolean }) {
+  if (airbus) return <AirbusFcu ap={ap} enabled={enabled} run={run} />;
   return (
     <section className="mcp" aria-label={generic ? "Autopilot" : "Mode control panel"}>
       <div className="mcp__row">
-        <McpWindow id="crs" label="COURSE" text={degText(ap.crs)} hint="e.g. 270" enabled={enabled} run={run} />
+        {ap.hasCrs !== false && <McpWindow id="crs" label="COURSE" text={degText(ap.crs)} hint="e.g. 270" enabled={enabled} run={run} />}
         <McpWindow id="spd" label="IAS / MACH" text={spdText(ap)} hint={ap.machMode ? "e.g. 0.78" : "e.g. 250"} enabled={enabled} run={run} lit={ap.speed || ap.lvlChg} />
         <McpWindow id="hdg" label="HEADING" text={degText(ap.hdg)} hint="e.g. 270" enabled={enabled} run={run} />
         <McpWindow id="alt" label="ALTITUDE" text={altText(ap)} hint="e.g. 12000 or FL350" enabled={enabled} run={run} />

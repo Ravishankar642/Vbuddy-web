@@ -5,6 +5,10 @@ import {
   summarize,
   WS_PATH,
   type AtcAlert,
+  type SimViewState,
+  type CduScreen,
+  type ChaseCommand,
+  type ChaseViewInfo,
   type FlightAlert,
   type CockpitCommand,
   type ControlInfo,
@@ -118,6 +122,7 @@ const TOKEN_KEY = "vbuddy.pairToken";
 const CMD_TIMEOUT_MS = 30_000;
 
 export type CmdReply = { ok: true } | { ok: false; error: string };
+export type ChaseReply = { ok: true; views?: ChaseViewInfo[]; airport?: string | null } | { ok: false; error: string };
 
 export function readPairToken(): string | undefined {
   try {
@@ -170,6 +175,10 @@ export function defaultBridgeUrl(loc: Location = window.location): string {
  * restarts. On reconnect it tells the bridge the last frame it saw, so the
  * bridge can replay what was missed.
  */
+/** What the live sim view hears from the bridge. */
+export type CduEvent = { kind: "screen"; screen: CduScreen | null } | { kind: "error"; error: string };
+export type SimViewEvent = { kind: "frame"; seq: number; jpeg: string; w: number; h: number } | { kind: "status"; state: SimViewState; message: string };
+
 export class BridgeClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<() => void>();
@@ -192,6 +201,7 @@ export class BridgeClient {
   private pendingAcars = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private pendingComms = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private pendingPanel = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
+  private pendingChase = new Map<string, { done: (r: ChaseReply) => void; timer: number }>();
   private pendingLeg = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private readAt: Record<string, number> = loadReadAt();
   private attentionCbs = new Set<(m: ChatMessage) => void>();
@@ -258,6 +268,35 @@ export class BridgeClient {
     return () => this.frameListeners.delete(fn);
   }
 
+  /* ---- live sim view: frames go to the watchers directly (not through the snapshot: a third of a second each, 50-100 KB) ---- */
+  private simViewCbs = new Set<(e: SimViewEvent) => void>();
+  /** Watch the live sim view while the returned function hasn't been called. */
+  watchSimView = (fn: (e: SimViewEvent) => void) => {
+    this.simViewCbs.add(fn);
+    if (this.simViewCbs.size === 1) this.send({ t: "simView", on: true });
+    return () => {
+      if (!this.simViewCbs.delete(fn)) return;
+      if (this.simViewCbs.size === 0) this.send({ t: "simView", on: false });
+    };
+  };
+
+  /* ---- PMDG CDU: screens go to the watcher directly; one CDU at a time ---- */
+  private cduCb: ((e: CduEvent) => void) | null = null;
+  private cduSide = 0;
+  /** Watch one CDU (0 left, 1 right, 2 centre) while the returned function hasn't been called. */
+  watchCdu = (side: number, fn: (e: CduEvent) => void) => {
+    this.cduCb = fn;
+    this.cduSide = side;
+    this.send({ t: "cduView", on: true, side });
+    return () => {
+      if (this.cduCb !== fn) return;
+      this.cduCb = null;
+      this.send({ t: "cduView", on: false, side });
+    };
+  };
+  /** Press a key on the watched CDU. */
+  cduKey = (side: number, key: string) => this.send({ t: "cduKey", side, key });
+
   /** Asks the bridge for a landing's full trace, unless we have it or already asked. */
   requestLanding = (id: string) => {
     if (this.snap.details[id] || this.pendingLandings.has(id)) return;
@@ -322,6 +361,19 @@ export class BridgeClient {
       }, CMD_TIMEOUT_MS);
       this.pendingPanel.set(id, { done, timer });
       this.send({ t: "panelCmd", id, cmd });
+    });
+  };
+  /** ChasePlane: list its saved views, or switch to one. */
+  chaseCommand = (cmd: ChaseCommand): Promise<ChaseReply> => {
+    if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
+    const id = `c${++this.cmdSeq}`;
+    return new Promise((done) => {
+      const timer = window.setTimeout(() => {
+        this.pendingChase.delete(id);
+        done({ ok: false, error: "No answer from the bridge." });
+      }, CMD_TIMEOUT_MS + 6000);
+      this.pendingChase.set(id, { done, timer });
+      this.send({ t: "chaseCmd", id, cmd });
     });
   };
   /** Adds, changes or deletes a planned flight. */
@@ -505,6 +557,11 @@ export class BridgeClient {
         p.done({ ok: false, error: "Lost the connection to the bridge." });
       }
       this.pendingPanel.clear();
+      for (const [, p] of this.pendingChase) {
+        clearTimeout(p.timer);
+        p.done({ ok: false, error: "Lost the connection to the bridge." });
+      }
+      this.pendingChase.clear();
       for (const [, p] of this.pendingLeg) {
         clearTimeout(p.timer);
         p.done({ ok: false, error: "Lost the connection to the bridge." });
@@ -569,8 +626,22 @@ export class BridgeClient {
         });
         this.everOpened = true;
         if (this.area) this.send({ t: "trafficArea", ...this.area });
+        if (this.simViewCbs.size) this.send({ t: "simView", on: true });
+        if (this.cduCb) this.send({ t: "cduView", on: true, side: this.cduSide });
         break;
       }
+      case "cdu":
+        if (m.side === this.cduSide) this.cduCb?.({ kind: "screen", screen: m.screen });
+        break;
+      case "cduResult":
+        if (!m.ok) this.cduCb?.({ kind: "error", error: m.error ?? "That key didn't reach the CDU." });
+        break;
+      case "simViewFrame":
+        for (const cb of this.simViewCbs) cb({ kind: "frame", seq: m.seq, jpeg: m.jpeg, w: m.w, h: m.h });
+        break;
+      case "simViewStatus":
+        for (const cb of this.simViewCbs) cb({ kind: "status", state: m.state, message: m.message ?? "" });
+        break;
       case "telemetry":
         this.acceptFrames([m.frame], false);
         break;
@@ -654,6 +725,15 @@ export class BridgeClient {
           clearTimeout(p.timer);
           this.pendingLeg.delete(m.id);
           p.done(m.ok ? { ok: true } : { ok: false, error: m.error ?? "That didn't work." });
+        }
+        break;
+      }
+      case "chaseResult": {
+        const p = this.pendingChase.get(m.id);
+        if (p) {
+          clearTimeout(p.timer);
+          this.pendingChase.delete(m.id);
+          p.done(m.ok ? { ok: true, views: m.views, airport: m.airport ?? null } : { ok: false, error: m.error ?? "That didn't work." });
         }
         break;
       }

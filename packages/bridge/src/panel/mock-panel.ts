@@ -8,6 +8,7 @@ export class MockPanel implements PanelBackend {
     this.s = structuredClone(this.initial);
     this.s.aircraft = kind === "boeing" ? "Mock Boeing 737-800" : "Mock Fenix A320";
     this.s.family = kind === "boeing" ? "boeing" : "airbus";
+    this.s.cdu = kind === "boeing" ? { sides: 2 } : null;
   }
   private initial: PanelState = {
     aircraft: "Mock Boeing 737-800",
@@ -15,7 +16,7 @@ export class MockPanel implements PanelBackend {
     lights: Object.fromEntries(LIGHT_IDS.map((l) => [l, l === "nav" || l === "panel"])) as PanelState["lights"],
     ap: { master: false, fd: true, athr: true, speed: false, lvlChg: false, hdgSel: false, lnav: false, app: false, altHld: false, vs: false, spd: 250, machMode: false, hdg: 90, alt: 10000, vsFpm: 0, crs: 90 },
     note: null,
-    sys: { flapsIndex: 0, flapsCount: 5, spoilersArmed: false, gearDown: true, parkingBrake: true, enginesRunning: 0, engineCount: 2, apuOn: false, pitotHeat: false, seatbelts: false, baroHpa: 1013.2, paused: false, simRate: 1, camera: 0, slew: false, wingLeveler: false, doors: [0, 0, 0, 0] },
+    sys: { flapsIndex: 0, flapsCount: 5, spoilersArmed: false, gearDown: true, parkingBrake: true, enginesRunning: 0, engineCount: 2, engines: [false, false], apuOn: false, pitotHeat: false, seatbelts: false, baroHpa: 1013.2, paused: false, simRate: 1, camera: 0, slew: false, wingLeveler: false, doors: [0, 0, 0, 0] },
   };
   private cbs: Array<() => void> = [];
   /** Controls that should pretend the aircraft ignored them (tests). */
@@ -32,6 +33,15 @@ export class MockPanel implements PanelBackend {
     fn(this.s);
     for (const cb of this.cbs) cb();
   }
+  async fcu(ctl: "spd" | "hdg" | "alt" | "vs", action: "push" | "pull"): Promise<PanelResult> {
+    if (this.s.family !== "airbus" || !this.s.ap) return { ok: false, error: "This aircraft has a Boeing MCP, not an Airbus FCU." };
+    if (ctl === "vs") return { ok: true };
+    this.change((s) => {
+      const m = s.ap!.managed ?? { spd: false, hdg: false, alt: false };
+      s.ap!.managed = { ...m, [ctl]: action === "push" };
+    });
+    return { ok: true };
+  }
   async sys(id: SysId, value?: number): Promise<PanelResult> {
     if (this.ignore.has(id)) return { ok: false, error: "The aircraft didn't respond." };
     const on = (value ?? 1) > 0;
@@ -43,7 +53,15 @@ export class MockPanel implements PanelBackend {
         case "spoilersArm": x.spoilersArmed = on; break;
         case "gear": x.gearDown = on; break;
         case "parkingBrake": x.parkingBrake = on; break;
-        case "engines": x.enginesRunning = on ? x.engineCount : 0; break;
+        case "engines": x.enginesRunning = on ? x.engineCount : 0; x.engines = x.engines?.map(() => on); break;
+        case "engine": {
+          const n = Math.abs(Math.round(value ?? 0));
+          if (x.engines && n >= 1 && n <= x.engines.length) {
+            x.engines = x.engines.map((r, i) => (i === n - 1 ? (value ?? 0) > 0 : r));
+            x.enginesRunning = x.engines.filter(Boolean).length;
+          }
+          break;
+        }
         case "apu": x.apuOn = on; break;
         case "pitotHeat": x.pitotHeat = on; break;
         case "seatbelts": x.seatbelts = on; break;

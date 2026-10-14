@@ -66,6 +66,8 @@ export class PanelService {
         return b.setLight(cmd.id, cmd.on);
       case "press":
         return b.press(cmd.ctl);
+      case "fcu":
+        return b.fcu ? b.fcu(cmd.ctl, cmd.action) : { ok: false, error: "Not available on this bridge." };
       case "set":
         this.asked.delete(cmd.ctl);
         return b.set(cmd.ctl, cmd.value);

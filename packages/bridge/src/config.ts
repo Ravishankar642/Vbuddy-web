@@ -41,6 +41,12 @@ export interface BridgeConfig {
   relayAccess: "paired" | "open";
   /** "local" = the home-network edition: no cloud relay at all (the switch is hidden and the PC never dials out). */
   edition: "cloud" | "local";
+  /** Installed from the release (edition.txt beside the app): only then does VBuddy update itself. */
+  packaged: boolean;
+  /** VBUDDY_NO_UPDATES=1 turns update checks off. */
+  noUpdates: boolean;
+  /** GitHub repository the releases come from (owner/name). */
+  updateRepo: string;
   /** Web Push notifications to paired devices (needs the relay or another https address to be useful). */
   push: boolean;
   /** Contact the push services can reach if your notifications misbehave (mailto: or https:). */
@@ -158,8 +164,10 @@ export function loadConfig(argv: string[] = process.argv.slice(2), envIn: NodeJS
   }
   // The installer's home-network edition carries an edition.txt saying "local" beside the app folder.
   let edition: "cloud" | "local" = "cloud";
+  const editionFile = resolve(here, "../edition.txt");
+  const packaged = existsSync(editionFile);
   try {
-    const f = resolve(here, "../edition.txt");
+    const f = editionFile;
     const v = (env.VBUDDY_EDITION ?? (existsSync(f) ? readFileSync(f, "utf8") : "")).trim().toLowerCase();
     if (v === "local") edition = "local";
   } catch {
@@ -177,6 +185,9 @@ export function loadConfig(argv: string[] = process.argv.slice(2), envIn: NodeJS
     relayUrl,
     relayOn,
     edition,
+    packaged,
+    noUpdates: /^(1|true|yes|on)$/i.test(env.VBUDDY_NO_UPDATES ?? ""),
+    updateRepo: /^[\w.-]+\/[\w.-]+$/.test(env.VBUDDY_UPDATE_REPO ?? "") ? env.VBUDDY_UPDATE_REPO! : "Ravishankar642/Vbuddy-web",
     relayAccess,
     push: pushArg === "on",
     pushContact,

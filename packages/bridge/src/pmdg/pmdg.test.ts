@@ -27,6 +27,11 @@ const HEADER = `
 #define EVT_OH_LIGHT_LANDING_RETRACT_L_SWITCH (THIRD_PARTY_EVENT_ID_MIN + 52)
 #define EVT_OH_LIGHT_LANDING_FIXED_L_SWITCH (THIRD_PARTY_EVENT_ID_MIN + 53)
 #define EVT_OH_LIGHT_DOME_BRIGHT_KNOB (THIRD_PARTY_EVENT_ID_MIN + 54)
+#define EVT_CDU_L_L1 (THIRD_PARTY_EVENT_ID_MIN + 534)
+#define EVT_CDU_L_EXEC (THIRD_PARTY_EVENT_ID_MIN + 556)
+#define EVT_CDU_L_A (THIRD_PARTY_EVENT_ID_MIN + 573)
+#define EVT_CDU_L_BRITENESS (THIRD_PARTY_EVENT_ID_MIN + 605)
+#define EVT_CDU_R_L1 (THIRD_PARTY_EVENT_ID_MIN + 606)
 
 struct PMDG_NG3_Data
 {
@@ -39,6 +44,7 @@ struct PMDG_NG3_Data
   bool MCP_annunHDG_SEL;
   bool MCP_annunLNAV;
   bool MCP_annunFD[2];
+  bool CDU_annunEXEC[2];
   unsigned char MCP_ATArmSw;
   unsigned char reserved[N_RESERVED];
 };
@@ -87,6 +93,8 @@ interface Opts {
   rightIs?: 1 | -1;
   /** Position-light positions that turn the nav light on (3-position switch). */
   navOn?: number[];
+  /** The aircraft sends its CDU screens (EnableCDUBroadcast on). */
+  cdu?: boolean;
 }
 
 function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
@@ -107,7 +115,7 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
   set("MCP_Altitude", 10000);
   set("MCP_VertSpeed", 0);
 
-  const requests: Array<{ id: number; off: number; len: number }> = [];
+  const requests: Array<{ id: number; off: number; len: number; cd: number }> = [];
   const defs = new Map<number, { off: number; len: number }>();
   const sent: Array<{ event: number; param: number }> = [];
   const lights: Record<string, boolean> = {};
@@ -116,27 +124,48 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
   const navOn = opts.navOn ?? [2, 0];
 
   const h = new EventEmitter() as EventEmitter & Record<string, unknown>;
+  // CDU 0's screen: 24 x 14 cells of (symbol, colour, flags), column by column, then Powered.
+  const cdu = Buffer.alloc(24 * 14 * 3 + 1);
+  const areaNames = new Map<number, string>();
   const emitAll = () =>
     setImmediate(() => {
-      for (const r of requests) h.emit("clientData", { requestID: r.id, data: { readBytes: (n: number) => aircraft.subarray(r.off, r.off + n) } });
+      for (const r of requests) {
+        const area = areaNames.get(r.cd) ?? "";
+        if (/_CDU_/.test(area) && (!opts.cdu || !area.endsWith("_0"))) continue;
+        const src = /_CDU_/.test(area) ? cdu : aircraft;
+        h.emit("clientData", { requestID: r.id, data: { readBytes: (n: number) => src.subarray(r.off, r.off + n) } });
+      }
     });
-  h.mapClientDataNameToID = () => 0;
+  h.mapClientDataNameToID = (name: string, id: number) => (areaNames.set(id, name), 0);
   h.addToClientDataDefinition = (def: number, off: number, len: number) => (defs.set(def, { off, len }), 0);
-  h.requestClientData = (_cd: number, id: number, def: number) => {
+  h.requestClientData = (cd: number, id: number, def: number) => {
     const d = defs.get(def)!;
-    requests.push({ id, off: d.off, len: d.len });
+    requests.push({ id, off: d.off, len: d.len, cd });
     emitAll();
     return 0;
   };
   const ev = (n: string) => sdk.events.get(n)!;
-  h.setClientData = (_cd: number, _def: number, _a: number, _b: number, _size: number, data: Buffer) => {
-    const event = data.readUInt32LE(0);
-    const param = data.readUInt32LE(4);
+  // PMDG's "method 2": events mapped as "#<number>" and transmitted (as PMDG_NG3_ConnectionTest.cpp does).
+  const evMap = new Map<number, number>();
+  const flags: number[] = [];
+  h.mapClientEventToSimEvent = (id: number, name: string) => (evMap.set(id, Number(name.replace("#", ""))), 0);
+  h.transmitClientEvent = (_obj: number, id: number, param: number, group: number, flag: number) => {
+    flags.push(group, flag);
+    apply(evMap.get(id)!, param);
+    return 0;
+  };
+  const apply = (event: number, param: number) => {
     sent.push({ event, param });
-    const right = param === 0x80000000;
+    // Knobs turn with the mouse wheel (PMDG's sample); switches act on the left click.
+    const right = param === 0x4000;
+    const wheelDown = param === 0x2000;
     const left = param === 0x20000000;
-    if (event === ev("EVT_MCP_HEADING_SELECTOR") && (right || left)) set("MCP_Heading", (get("MCP_Heading") + (right ? rightIs : -rightIs) + 360) % 360);
-    if (event === ev("EVT_MCP_ALTITUDE_SELECTOR") && (right || left)) set("MCP_Altitude", get("MCP_Altitude") + (right ? rightIs : -rightIs) * 100);
+    if (event === ev("EVT_MCP_HEADING_SELECTOR") && (right || wheelDown)) set("MCP_Heading", (get("MCP_Heading") + (right ? rightIs : -rightIs) + 360) % 360);
+    if (event === ev("EVT_MCP_ALTITUDE_SELECTOR") && (right || wheelDown)) set("MCP_Altitude", get("MCP_Altitude") + (right ? rightIs : -rightIs) * 100);
+    // PMDG's direct "set" events (only in the headers that define them)
+    if (event === 0x11000 + 14504) set("MCP_Heading", param);
+    if (event === 0x11000 + 14505) set("MCP_Altitude", param);
+    if (event === 0x11000 + 14506) set("MCP_VertSpeed", param - 10000);
     if (event === ev("EVT_MCP_CMD_A_SWITCH") && left) set("MCP_annunCMD_A", get("MCP_annunCMD_A") ? 0 : 1);
     // HDG SEL does nothing (mode not available); LNAV works
     if (event === ev("EVT_MCP_LNAV_SWITCH") && left) set("MCP_annunLNAV", get("MCP_annunLNAV") ? 0 : 1);
@@ -204,7 +233,19 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
     set(name, v);
     emitAll();
   };
-  return { panel, base, sent, get, poke, lights, load, sdk };
+  const cduWrite = (x: number, y: number, text: string, color = 0, flag = 0) => {
+    for (let i = 0; i < text.length; i++) {
+      const at = ((x + i) * 14 + y) * 3;
+      cdu[at] = text.charCodeAt(i);
+      cdu[at + 1] = color;
+      cdu[at + 2] = flag;
+    }
+  };
+  const cduPower = (on: boolean) => {
+    cdu[cdu.length - 1] = on ? 1 : 0;
+    emitAll();
+  };
+  return { panel, base, sent, get, poke, lights, load, sdk, flags, cduWrite, cduPower, areaNames };
 }
 
 test("a PMDG 737 reports its autopilot from the aircraft's own data", async () => {
@@ -240,6 +281,58 @@ test("heading wraps the short way round", async () => {
   assert.equal(r.get("MCP_Heading"), 5);
 });
 
+test("knobs use PMDG's direct set events when the header has them: one event, no turning", async () => {
+  const withSet = HEADER.replace("#define EVT_MCP_HDG_SEL_SWITCH", "#define EVT_MCP_HDG_SET (THIRD_PARTY_EVENT_ID_MIN + 14504)\n#define EVT_MCP_ALT_SET (THIRD_PARTY_EVENT_ID_MIN + 14505)\n#define EVT_MCP_VS_SET (THIRD_PARTY_EVENT_ID_MIN + 14506)\n#define EVT_MCP_HDG_SEL_SWITCH");
+  const r = rig("737-800 PAX BW SC", {}, withSet);
+  await r.load();
+  assert.equal(await ok(r.panel.set("hdg", 275)), true);
+  assert.equal(r.get("MCP_Heading"), 275);
+  assert.equal(await ok(r.panel.set("alt", 37000)), true);
+  assert.equal(r.get("MCP_Altitude"), 37000);
+  assert.equal(await ok(r.panel.set("vs", -1800)), true);
+  assert.equal(r.get("MCP_VertSpeed"), -1800);
+  assert.deepEqual(r.sent.map((x) => x.param), [275, 37000, 8200]);
+});
+
+test("the CDU screen is read the way PMDG's CDU sample reads it", async () => {
+  const r = rig("737-800 PAX BW SC", { cdu: true });
+  r.cduWrite(0, 0, "ROUTE", 2);
+  r.cduWrite(0, 1, "\xa1ABC\xa2", 1, 1);
+  await r.load();
+  assert.ok([...r.areaNames.values()].includes("PMDG_NG3_CDU_0") && [...r.areaNames.values()].includes("PMDG_NG3_CDU_1"));
+  r.cduPower(true);
+  const changed = await new Promise<number>((done) => r.panel.onCdu(done));
+  assert.equal(changed, 0);
+  const s = r.panel.screen(0)!;
+  assert.equal(s.live, true);
+  assert.equal(s.powered, true);
+  assert.equal(s.rows.length, 14);
+  assert.equal(s.rows[0], "ROUTE".padEnd(24));
+  assert.equal(s.colors[0]!.slice(0, 5), "22222");
+  assert.equal(s.rows[1]!.slice(0, 5), "←ABC→");
+  assert.equal(s.flags[1]![0], "1");
+  assert.deepEqual(s.keys, ["L1", "EXEC", "A"]);
+  assert.equal(r.panel.state()!.cdu?.sides, 2);
+});
+
+test("a CDU that isn't broadcasting says which lines to add to the options file", async () => {
+  const r = rig("737-800 PAX BW SC");
+  await r.load();
+  await new Promise((x) => setTimeout(x, 80));
+  const s = r.panel.screen(1)!;
+  assert.equal(s.live, false);
+  assert.match(s.message ?? "", /737_Options\.ini.*EnableCDUBroadcast\.0=1, EnableCDUBroadcast\.1=1/);
+});
+
+test("CDU keys are pressed like PMDG's sample presses a switch: click, then release", async () => {
+  const r = rig("737-800 PAX BW SC", { cdu: true });
+  await r.load();
+  assert.equal((await r.panel.key(1, "L1")).ok, true);
+  const n = r.sdk.events.get("EVT_CDU_R_L1");
+  assert.deepEqual(r.sent.filter((x) => x.event === n).map((x) => x.param), [0x20000000, 0x00020000]);
+  assert.equal((await r.panel.key(0, "NOPE")).ok, false);
+});
+
 test("buttons send the click and are checked against the MCP light", async () => {
   const r = rig("737-800 PAX BW SC");
   await r.load();
@@ -251,6 +344,10 @@ test("buttons send the click and are checked against the MCP light", async () =>
   assert.match((bad as { error: string }).error, /HDG SEL.*light didn't change/);
   // the click carried PMDG's left-click flag and the event number from the header
   assert.ok(r.sent.some((s) => s.event === r.sdk.events.get("EVT_MCP_CMD_A_SWITCH") && s.param === 0x20000000));
+  // ...followed by the release, as PMDG's sample does
+  assert.ok(r.sent.some((s) => s.event === r.sdk.events.get("EVT_MCP_CMD_A_SWITCH") && s.param === 0x00020000));
+  // Sent at the highest priority with GROUPID_IS_PRIORITY (16), as PMDG's sample does.
+  assert.deepEqual([...new Set(r.flags)].sort(), [1, 16]);
 });
 
 test("a button the header doesn't have says so", async () => {
@@ -298,10 +395,12 @@ test("another aircraft is left to the standard panel", async () => {
   assert.deepEqual(r.base.stdCalls, ["press cmd"]);
 });
 
-test("a missing SDK file is explained", async () => {
+test("without the SDK file the standard panel (Cobalt's PMDG event numbers) takes over and the app says where the file goes", async () => {
   const r = rig("737-800 PAX BW SC", {}, null);
   await r.load();
   const st = r.panel.state()!;
-  assert.equal(st.ap, null);
-  assert.match(st.note ?? "", /PMDG_NG3_SDK\.h/);
+  assert.equal(st.family, "boeing");
+  assert.match(st.note ?? "", /PMDG_NG3_SDK\.h.*%APPDATA%\\VBuddy\\sdk/);
+  await r.panel.press("cmd");
+  assert.deepEqual(r.base.stdCalls, ["press cmd"]);
 });

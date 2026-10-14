@@ -16,3 +16,4 @@ export * from "./briefing.js";
 export * from "./acars.js";
 export * from "./systems.js";
 export * from "./legs.js";
+export * from "./cdu.js";

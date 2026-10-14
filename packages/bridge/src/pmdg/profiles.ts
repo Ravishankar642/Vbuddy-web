@@ -54,7 +54,8 @@ const shared = {
     nav: [light("POS"), light("NAV")],
     strobe: [light("STROBE"), light("POS")],
     beacon: [light("ANT.?COL|BEACON")],
-    landing: [light("LAND")],
+    // The 777 names them LANDING_*; the 737 has retractable (L/R_RETRACT) and fixed (L/R_FIXED) landing light switches.
+    landing: [light("LAND"), light("(L|R)_(RETRACT|FIXED)")],
     taxi: [light("TAXI")],
     wing: [light("WING")],
     logo: [light("LOGO")],

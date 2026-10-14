@@ -34,6 +34,7 @@ export function useBridgeActions() {
     commsCommand: c.commsCommand,
     acarsCommand: c.acarsCommand,
     panelCommand: c.panelCommand,
+    chaseCommand: c.chaseCommand,
     legCommand: c.legCommand,
     markRead: c.markRead,
     dismissAttention: c.dismissAttention,
@@ -59,3 +60,17 @@ export function useNow(ms = 1000) {
   return now;
 }
 
+
+/** Watch the live sim view (the bridge only captures while someone watches). */
+export function watchSimView(fn: Parameters<BridgeClient["watchSimView"]>[0]) {
+  return client().watchSimView(fn);
+}
+
+/** Watch one PMDG CDU (the bridge sends its screen on every change). */
+export function watchCdu(side: number, fn: Parameters<BridgeClient["watchCdu"]>[1]) {
+  return client().watchCdu(side, fn);
+}
+/** Press a key on a PMDG CDU. */
+export function cduKey(side: number, key: string) {
+  client().cduKey(side, key);
+}

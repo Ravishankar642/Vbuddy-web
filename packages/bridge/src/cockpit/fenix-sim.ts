@@ -14,7 +14,9 @@ const MF_SIZE = 1024;
 /** Optional: MobiFlight ignores a command identical to the last, so each carries a changing number. */
 const SEQ_VAR = "VBUDDY_SEQ";
 
-const PATHS: ControlPath[] = ["mobiflight", "simconnect"];
+// As Cobalt: direct SimConnect L:var writes first (MSFS 2020 SU12+ and MSFS 2024 read and write "L:" names in a normal data
+// definition, no add-on needed), the MobiFlight WASM module second for older simulator builds.
+const PATHS: ControlPath[] = ["simconnect", "mobiflight"];
 
 interface SimLike {
   onHandle(cb: (h: ConnectionHandle | null) => void): void;

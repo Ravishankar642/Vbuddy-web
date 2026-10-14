@@ -50,6 +50,8 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VBuddy"" dir=in action=allow protocol=TCP localport=4789 profile=any"; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VBuddy program"" dir=in action=allow program=""{app}\node\node.exe"" enable=yes profile=any"; Flags: runhidden
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\VBuddy.vbs"""; WorkingDir: "{app}"; Description: "Start VBuddy now (it runs in the notification area)"; Flags: postinstall nowait skipifsilent
+; An update installed from the VBuddy window runs silently: start VBuddy again afterwards, as the signed-in user (not as administrator).
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\VBuddy.vbs"" quiet"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""VBuddy"""; Flags: runhidden; RunOnceId: "RemoveFirewallRule"

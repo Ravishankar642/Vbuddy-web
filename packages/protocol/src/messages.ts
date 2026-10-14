@@ -3,6 +3,7 @@ import { LandingSchema, LandingSummarySchema } from "./landing.js";
 import { CockpitCommandSchema, ControlInfoSchema, FcuStateSchema, PairedDeviceSchema } from "./cockpit.js";
 import { ChatMessageSchema, CommsCommandSchema, CommsStateSchema } from "./comms.js";
 import { LegCommandSchema, PlannedLegSchema } from "./legs.js";
+import { CduKeySchema, CduScreenSchema } from "./cdu.js";
 import { PanelCommandSchema, PanelStateSchema } from "./panel.js";
 import { SystemsSnapshotSchema } from "./systems.js";
 import { AcarsCommandSchema, AcarsStateSchema } from "./acars.js";
@@ -226,7 +227,27 @@ export const ErrorMsgSchema = z.object({
   message: z.string(),
 });
 
+/** Live sim view: one JPEG frame of the simulator window (base64, no data: prefix). Sent only to devices that asked and are paired. */
+export const SimViewFrameSchema = z.object({ ...base, t: z.literal("simViewFrame"), seq: z.number().int(), jpeg: z.string().max(3_000_000), w: z.number().int(), h: z.number().int() });
+export const SimViewStateSchema = z.enum(["starting", "live", "no-window", "minimized", "unavailable", "not-allowed"]);
+export type SimViewState = z.infer<typeof SimViewStateSchema>;
+export const ChaseViewSchema = z.object({ guid: z.string(), name: z.string(), theme: z.string(), icao: z.string(), lat: z.number().nullable(), lon: z.number().nullable(), skipCycle: z.boolean() });
+export type ChaseViewInfo = z.infer<typeof ChaseViewSchema>;
+export const ChaseResultSchema = z.object({ ...base, t: z.literal("chaseResult"), id: z.string(), ok: z.boolean(), error: z.string().optional(), views: z.array(ChaseViewSchema).max(2000).optional(), airport: z.string().nullable().optional() });
+
+/** A PMDG CDU screen, sent to the devices watching that CDU (cduView) whenever it changes; null when there is none. */
+export const CduMsgSchema = z.object({ ...base, t: z.literal("cdu"), side: z.number().int().min(0).max(2), screen: CduScreenSchema.nullable() });
+export const CduResultSchema = z.object({ ...base, t: z.literal("cduResult"), ok: z.boolean(), error: z.string().max(300).optional() });
+
+/** Why there is or isn't a picture right now. */
+export const SimViewStatusSchema = z.object({ ...base, t: z.literal("simViewStatus"), state: SimViewStateSchema, message: z.string().max(300).optional() });
+
 export const ServerMessageSchema = z.discriminatedUnion("t", [
+  CduMsgSchema,
+  CduResultSchema,
+  ChaseResultSchema,
+  SimViewFrameSchema,
+  SimViewStatusSchema,
   WelcomeSchema,
   TelemetryMsgSchema,
   TelemetryBatchSchema,
@@ -333,7 +354,24 @@ export const PanelCmdSchema = z.object({ ...base, t: z.literal("panelCmd"), id: 
 
 export const LegCmdSchema = z.object({ ...base, t: z.literal("legCmd"), id: z.string().max(40), cmd: LegCommandSchema });
 
+/** ChasePlane camera views: list them, or switch to one (by ChasePlane's own id). */
+export const ChaseCommandSchema = z.discriminatedUnion("op", [z.object({ op: z.literal("views") }), z.object({ op: z.literal("set"), guid: z.string().min(1).max(100) })]);
+export type ChaseCommand = z.infer<typeof ChaseCommandSchema>;
+export const ChaseCmdSchema = z.object({ ...base, t: z.literal("chaseCmd"), id: z.string().max(40), cmd: ChaseCommandSchema });
+
+/** Start (on) or stop watching a PMDG CDU screen. */
+export const CduViewSchema = z.object({ ...base, t: z.literal("cduView"), on: z.boolean(), side: z.number().int().min(0).max(2) });
+/** Press a key on a PMDG CDU (paired devices only). */
+export const CduKeyMsgSchema = z.object({ ...base, t: z.literal("cduKey"), side: z.number().int().min(0).max(2), key: CduKeySchema });
+
+/** Start (on) or stop watching the live sim view. */
+export const SimViewSchema = z.object({ ...base, t: z.literal("simView"), on: z.boolean() });
+
 export const ClientMessageSchema = z.discriminatedUnion("t", [
+  CduViewSchema,
+  CduKeyMsgSchema,
+  SimViewSchema,
+  ChaseCmdSchema,
   HelloSchema,
   PingSchema,
   GetLandingSchema,

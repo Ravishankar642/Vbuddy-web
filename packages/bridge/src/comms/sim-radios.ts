@@ -1,6 +1,15 @@
 import type { SimStatus } from "@vbuddy/protocol";
 import { DataRequestFlag, EventFlag, RawBuffer, SimConnectConstants, SimConnectDataType, SimConnectPeriod, type ConnectionHandle } from "node-simconnect";
 import type { RadioBackend, RadioValues } from "./backend.js";
+import { addonOf, comFrequencyMatches, FENIX_RMP, rmpChannelIndex, rmpTuneClicks } from "../panel/addons.js";
+import { LVarChannel } from "../sim/lvars.js";
+
+/** SimConnect ids for L:var reads and writes here (the panel uses 3000-3199). */
+const LVAR_IDS = 3300;
+/** Cobalt: up to three passes to close in on a frequency; each waits up to 1.2 s for the radio to move. */
+const RMP_TUNE_PASSES = 3;
+const RMP_SETTLE_MS = 1200;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const DEF_COMMS = 50;
 const REQ_COMMS = 50;
@@ -63,6 +72,7 @@ export class SimRadios implements RadioBackend {
   private ids = new Map<EventKey, number>();
   private stateDefReady = false;
   private freqDefs = new Set<number>();
+  private lv: LVarChannel | null = null;
 
   constructor(private sim: SimLike) {
     sim.onHandle((h) => this.attach(h));
@@ -77,6 +87,7 @@ export class SimRadios implements RadioBackend {
     this.stateDefReady = false;
     this.freqDefs.clear();
     this.set(null);
+    this.lv = h ? new LVarChannel(h, LVAR_IDS) : null;
     if (!h) return;
     for (const [name, unit] of VARS) this.sim.labelSend?.(h.addToDataDefinition(DEF_COMMS, name, unit, SimConnectDataType.FLOAT64), name);
     h.on("simObjectData", (r) => {
@@ -126,6 +137,97 @@ export class SimRadios implements RadioBackend {
    * classic BCD event, then writes the frequency variable directly, moving on only if the radio didn't change.
    */
   setCom(radio: 1 | 2, which: "active" | "standby", hz: number) {
+    if (!this.h || !this.v) return false;
+    if (this.isFenix()) {
+      // The Fenix ignores the simulator's frequency events: turn its radio panel's knobs instead (as Cobalt does).
+      void this.fenixSetCom(radio, which, hz).then((r) => {
+        if (r === null) this.stockSetCom(radio, which, hz);
+      });
+      return true;
+    }
+    return this.stockSetCom(radio, which, hz);
+  }
+
+  private isFenix() {
+    return addonOf(this.sim.status().aircraftTitle ?? "") === "fenix";
+  }
+
+  private mhz(radio: 1 | 2, which: "active" | "standby"): number | null {
+    const r = this.v?.radios?.[radio === 1 ? "com1" : "com2"];
+    return r ? r[which] / 1e6 : null;
+  }
+
+  /** Waits for a radio to leave `from`, then lets the knob settle (Cobalt: waitForComChange). */
+  private async waitChange(radio: 1 | 2, which: "active" | "standby", from: number): Promise<number | null> {
+    let latest: number | null = null;
+    for (let t = 0; t < RMP_SETTLE_MS; t += 250) {
+      await sleep(250);
+      const now = this.mhz(radio, which);
+      if (now === null) continue;
+      latest = now;
+      if (!comFrequencyMatches(now, from)) {
+        await sleep(250);
+        return this.mhz(radio, which) ?? now;
+      }
+    }
+    return latest;
+  }
+
+  /**
+   * Fenix RMP: outer knob 1 MHz a click, inner knob one channel a click (or four when the RMP is in 25 kHz spacing:
+   * the first pass sends one inner click to find out). Active has no direct entry, so it is standby then transfer.
+   * True: reached; false: the knobs moved but didn't get there; null: not possible here (use the standard events).
+   */
+  private async fenixSetCom(radio: 1 | 2, which: "active" | "standby", hz: number): Promise<boolean | null> {
+    if (!this.lv || !(await this.lv.ready())) return null;
+    const target = hz / 1e6;
+    if (which === "active") {
+      const active = this.mhz(radio, "active");
+      if (active !== null && comFrequencyMatches(active, target)) return true;
+      const tuned = await this.fenixSetCom(radio, "standby", hz);
+      if (tuned !== true) return tuned;
+      return this.fenixSwap(radio);
+    }
+    const rmp = FENIX_RMP[radio];
+    let current = this.mhz(radio, "standby");
+    if (current === null || current < 100) return null;
+    let perClick = 1;
+    let moved = false;
+    for (let pass = 0; pass < RMP_TUNE_PASSES; pass++) {
+      if (comFrequencyMatches(current, target)) break;
+      const c = rmpTuneClicks(current, target, perClick);
+      const inner = pass === 0 ? Math.sign(c.inner) : c.inner;
+      if (c.outer === 0 && inner === 0) break;
+      if (c.outer !== 0) await this.lv.add(rmp.outer, c.outer);
+      if (inner !== 0) await this.lv.add(rmp.inner, inner);
+      const after = await this.waitChange(radio, "standby", current);
+      if (after === null || comFrequencyMatches(after, current)) break;
+      moved = true;
+      if (pass === 0 && inner !== 0 && Math.abs(rmpChannelIndex(after) - rmpChannelIndex(current)) === 4) perClick = 4;
+      current = after;
+    }
+    if (comFrequencyMatches(current, target)) return true;
+    return moved ? false : null;
+  }
+
+  /** Fenix RMP transfer key, checked against the active frequency; the standard swap event if the key did nothing. */
+  private async fenixSwap(radio: 1 | 2): Promise<boolean | null> {
+    if (!this.lv || !(await this.lv.ready())) return null;
+    const before = this.mhz(radio, "active");
+    const standby = this.mhz(radio, "standby");
+    await this.lv.press(FENIX_RMP[radio].xfer);
+    // Pressed but can't be checked: don't send the standard swap too (it could swap straight back).
+    if (before === null) return true;
+    if (standby !== null && comFrequencyMatches(standby, before)) return true;
+    let after = await this.waitChange(radio, "active", before);
+    if (after === null || comFrequencyMatches(after, before)) {
+      this.fire(radio === 1 ? "com1Swap" : "com2Swap", 0);
+      after = await this.waitChange(radio, "active", before);
+    }
+    return after !== null && !comFrequencyMatches(after, before);
+  }
+
+  private stockSetCom(radio: 1 | 2, which: "active" | "standby", hz: number) {
     if (!this.h || !this.v) return false;
     const name = which === "active" ? "Active" : "Standby";
     const reached = () => {
@@ -189,6 +291,12 @@ export class SimRadios implements RadioBackend {
     h.setDataOnSimObject(def, SimConnectConstants.OBJECT_ID_USER, { buffer: b, arrayCount: 0, tagged: false });
   }
   swapCom(radio: 1 | 2) {
+    if (this.isFenix() && this.h && this.v) {
+      void this.fenixSwap(radio).then((r) => {
+        if (r === null) this.fire(radio === 1 ? "com1Swap" : "com2Swap", 0);
+      });
+      return true;
+    }
     return this.fire(radio === 1 ? "com1Swap" : "com2Swap", 0);
   }
   setXpdrCode(code: string) {

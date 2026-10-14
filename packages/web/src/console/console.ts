@@ -15,6 +15,7 @@ interface Info {
   accounts: { simbrief: string; hoppieSet: boolean };
   dataDir: string | null;
   host: { autostart: boolean | null; plugin: { available: boolean; dir: string | null; installed: boolean; upToDate: boolean } | null; canReconnect: boolean };
+  update: { current: string; status: { kind: string }; text: string; version: string | null; notes: string | null; url: string | null };
   pause: { schedule: { mode: "atTime"; atEpochMs: number } | { mode: "beforeTod"; leadSec: number }; etaSec: number | null; waiting: string } | null;
 }
 
@@ -180,6 +181,14 @@ function renderSettings(i: Info) {
   if (!busy) sw.checked = a === true;
   sw.disabled = a === null;
   setText($("autostartText"), a === null ? "Available in the installed VBuddy on Windows." : a ? "VBuddy starts in the notification area when you sign in." : "Off. Start VBuddy from the Start menu when you want it.");
+  // updates
+  const u = i.update;
+  setText($("updateText"), `This PC has VBuddy ${u.current}. ${u.text}`);
+  const notes = $("updateNotes");
+  notes.hidden = !(u.notes && u.version && ["ready", "downloading", "waiting-for-sim"].includes(u.status.kind));
+  if (!notes.hidden) setText(notes, `What's new in ${u.version}:\n${u.notes}`);
+  $<HTMLButtonElement>("updateInstall").hidden = u.status.kind !== "ready";
+  $<HTMLButtonElement>("updateCheck").disabled = u.status.kind === "off" || u.status.kind === "checking" || u.status.kind === "downloading" || u.status.kind === "installing";
   // vPilot plugin
   const pl = i.host.plugin;
   const btn = $<HTMLButtonElement>("installPlugin");
@@ -195,7 +204,7 @@ function renderSettings(i: Info) {
   }
 }
 
-async function act(name: "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause", body: object = {}): Promise<boolean> {
+async function act(name: "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall", body: object = {}): Promise<boolean> {
   busy = true;
   try {
     const next = await call(`/api/console/${name}`, body);
@@ -333,6 +342,16 @@ $<HTMLInputElement>("autostartOn").onchange = async (e) => {
     $<HTMLInputElement>("autostartOn").checked = !on;
     banner(lastNote || "Couldn't change that.");
   }
+};
+$<HTMLButtonElement>("updateCheck").onclick = async () => {
+  say("updateStatus", "Checking…", "muted");
+  const ok = await act("updateCheck");
+  say("updateStatus", ok ? "" : lastNote || "Couldn't check for updates.", ok ? "muted" : "bad");
+};
+$<HTMLButtonElement>("updateInstall").onclick = async () => {
+  say("updateStatus", "Starting the installer. Windows asks for your permission…", "muted");
+  const ok = await act("updateInstall");
+  say("updateStatus", ok ? "Installing. VBuddy closes and starts again by itself." : lastNote || "Couldn't start the installer.", ok ? "ok" : "bad");
 };
 $<HTMLButtonElement>("installPlugin").onclick = async () => {
   const ok = await act("installPlugin");

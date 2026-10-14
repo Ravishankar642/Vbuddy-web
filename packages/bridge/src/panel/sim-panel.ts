@@ -1,13 +1,21 @@
-import { familyOf, LIGHT_IDS, type ApButton, type ApKnob, type LightId, type PanelState, type SimStatus, type SysId } from "@vbuddy/protocol";
+import { familyOf, LIGHT_IDS, type CockpitCommand, type FcuState, type ApButton, type ApKnob, type LightId, type PanelState, type SimStatus, type SysId } from "@vbuddy/protocol";
 import { DataRequestFlag, EventFlag, RawBuffer, SimConnectConstants, SimConnectDataType, SimConnectPeriod, type ConnectionHandle } from "node-simconnect";
 import type { PanelBackend, PanelResult } from "./backend.js";
-import { addonOf, FBW_ALT_INCREMENT, FBW_BUTTON, FBW_SET, fbwValue, IFLY_BUTTON, IFLY_KNOB, incDecClicks, isSelectorKnob, matchName, pmdgPlan } from "./addons.js";
+import { addonOf, AIRLINER_BUTTON, AIRLINER_FCU_BUTTON, AIRLINER_KNOB, AIRLINER_LIGHT, studyReadOnly, eventDword, FBW_LIGHTS, FBW_PUSH_PULL, FENIX_MANAGED_DOT, FENIX_PUSH_PULL, SLOT_INDEX_EVENT, type FcuKnob, FBW_ALT_INCREMENT, FBW_BUTTON, FBW_SET, fbwValue, FENIX_APU_START_DELAY_MS, FENIX_LIGHT, FENIX_SWITCH, FENIX_SYS, IFLY_BUTTON, IFLY_KNOB, incDecClicks, isSelectorKnob, matchName, pmdgPlan, STUDY_NOTE } from "./addons.js";
+import { LVarChannel } from "../sim/lvars.js";
 
 const DEF_PANEL = 70;
+/** The Fenix's own switch positions, read once a second while a Fenix is loaded (Cobalt overlays these too). */
+const DEF_FENIX_SW = 73;
+const REQ_FENIX_SW = 73;
+const FENIX_SW_VARS = [FENIX_SWITCH.speedbrake, FENIX_SWITCH.parkingBrake, FENIX_SWITCH.seatbelts, FENIX_SWITCH.probeHeat, FENIX_SWITCH.apuMaster] as const;
+/** SimConnect ids for L:var reads and writes (see sim/lvars.ts). */
+const LVAR_IDS = 3000;
+/** FlyByWire FCU lights and managed dots, read once a second while a FlyByWire is loaded. */
+const DEF_FBW = 74;
+const REQ_FBW = 74;
 const REQ_PANEL = 70;
 const EVENT_BASE = 400;
-/** A real notification group: SimConnect rejects a group it was never told about. */
-const GROUP_PANEL = 62;
 const GROUP_PRIORITY_HIGHEST = 1;
 const VERIFY_MS = 1200;
 
@@ -42,6 +50,15 @@ const AP_VARS: Array<[string, string]> = [
   ["AUTOPILOT ALTITUDE LOCK VAR", "Feet"],
   ["AUTOPILOT VERTICAL HOLD VAR", "Feet per minute"],
   ["NAV OBS:1", "Degrees"],
+  // Airbus FCU slots: 2 = managed, 1 = selected (the default A320neo; Cobalt's FCU_SLOT_INDEX_SIMVARS).
+  ["AUTOPILOT SPEED SLOT INDEX", "Number"],
+  ["AUTOPILOT HEADING SLOT INDEX", "Number"],
+  ["AUTOPILOT ALTITUDE SLOT INDEX", "Number"],
+  ["AUTOPILOT VS SLOT INDEX", "Number"],
+  // The V/S window per slot: the iniBuilds A350 shows one of these, not the plain variable (which one is watched for).
+  ["AUTOPILOT VERTICAL HOLD VAR:1", "Feet per minute"],
+  ["AUTOPILOT VERTICAL HOLD VAR:2", "Feet per minute"],
+  ["AUTOPILOT VERTICAL HOLD VAR:3", "Feet per minute"],
 ];
 
 /** Aircraft systems and simulator state, read after the autopilot variables. */
@@ -159,9 +176,28 @@ export class SimPanel implements PanelBackend {
   private ids = new Map<string, number>();
   private inputs = new Map<string, bigint>();
   private inputsFor = "";
+  /** Retries the input-event list: it fails while an aircraft is still loading (SimConnect answers ERROR). */
+  private inputsTimer: NodeJS.Timeout | null = null;
+  private inputsTries = 0;
+  /** iniBuilds knobs: how far one write of +1 moves the window, learned per aircraft and knob. */
+  private airlinerStep = new Map<string, number>();
+  /** Current values of the iniBuilds FCU / light input events (subscribed), by name. */
+  private inputValues = new Map<string, number>();
+  private inputHashNames = new Map<bigint, string>();
+  /** iniBuilds V/S window: which of the plain / :1 / :2 / :3 V/S variables last changed (that's the one the FCU shows). */
+  private vsPrev: number[] = [];
+  private vsSrc = 0;
   private title = "";
   private note: string | null = null;
   private lastJson = "";
+  private lv: LVarChannel | null = null;
+  /** Latest Fenix switch positions (FENIX_SW_VARS order), or null when no Fenix is loaded. */
+  private fenixSw: number[] | null = null;
+  private fenixSwOn = false;
+  private fbw: number[] | null = null;
+  private fbwOn = false;
+  private lastAp: number[] = [];
+  private lastLights: PanelState["lights"] | null = null;
 
   constructor(private sim: SimLike) {
     sim.onHandle((h) => this.attach(h));
@@ -172,13 +208,18 @@ export class SimPanel implements PanelBackend {
         this.title = st.aircraftTitle;
         this.note = null;
         this.refreshInputEvents();
-        if (this.s) this.publish({ ...this.s, aircraft: this.title, family: familyOf(this.title) });
+        this.watchFenix();
+        if (this.s) this.publish({ ...this.s, aircraft: this.title, family: familyOf(this.title), readOnly: this.readOnly() });
       }
     });
   }
 
   state() {
     return this.s;
+  }
+  /** Study airliners (FSLabs, ToLiss, iniBuilds A300/A310) ignore outside commands: say so instead of offering controls. */
+  private readOnly(): string | null {
+    return addonOf(this.title) === "study" ? studyReadOnly(this.title) : null;
   }
   onChange(cb: () => void) {
     this.cbs.push(cb);
@@ -197,7 +238,24 @@ export class SimPanel implements PanelBackend {
     this.inputs.clear();
     this.inputsFor = "";
     this.publish(null);
+    this.lv = h ? new LVarChannel(h, LVAR_IDS) : null;
+    this.fenixSw = null;
+    this.fenixSwOn = false;
     if (!h) return;
+    this.fbw = null;
+    this.fbwOn = false;
+    for (const n of FENIX_SW_VARS) h.addToDataDefinition(DEF_FENIX_SW, `L:${n}`, "number", SimConnectDataType.FLOAT64);
+    for (const n of FBW_LIGHTS) h.addToDataDefinition(DEF_FBW, `L:${n}`, "number", SimConnectDataType.FLOAT64);
+    h.on("simObjectData", (r) => {
+      if (r.requestID !== REQ_FBW || h !== this.h || !this.fbwOn) return;
+      this.fbw = FBW_LIGHTS.map(() => r.data.readFloat64());
+      this.republish();
+    });
+    h.on("simObjectData", (r) => {
+      if (r.requestID !== REQ_FENIX_SW || h !== this.h || !this.fenixSwOn) return;
+      this.fenixSw = FENIX_SW_VARS.map(() => r.data.readFloat64());
+      this.republish();
+    });
     for (const l of LIGHT_IDS) this.sim.labelSend?.(h.addToDataDefinition(DEF_PANEL, LIGHT_VARS[l], "Bool", SimConnectDataType.FLOAT64), LIGHT_VARS[l]);
     for (const [name, unit] of AP_VARS) this.sim.labelSend?.(h.addToDataDefinition(DEF_PANEL, name, unit, SimConnectDataType.FLOAT64), name);
     for (const [name, unit] of SYS_VARS) this.sim.labelSend?.(h.addToDataDefinition(DEF_PANEL, name, unit, SimConnectDataType.FLOAT64), name);
@@ -207,42 +265,99 @@ export class SimPanel implements PanelBackend {
       if (r.requestID !== REQ_PANEL || h !== this.h) return;
       const n = [...LIGHT_IDS, ...AP_VARS, ...SYS_VARS].map(() => r.data.readFloat64());
       const lights = Object.fromEntries(LIGHT_IDS.map((l, i) => [l, n[i]! > 0])) as PanelState["lights"];
-      const a = n.slice(LIGHT_IDS.length, LIGHT_IDS.length + AP_VARS.length);
+      this.lastLights = lights;
+      this.lastAp = n.slice(LIGHT_IDS.length, LIGHT_IDS.length + AP_VARS.length);
       const x = n.slice(LIGHT_IDS.length + AP_VARS.length);
-      const title = this.sim.status().aircraftTitle || this.title;
-      this.title = title;
-      const mach = a[10]! > 0;
-      this.publish({
-        aircraft: title,
-        family: familyOf(title),
-        lights,
-        ap: {
-          master: a[0]! > 0,
-          fd: a[1]! > 0,
-          athr: a[2]! > 0,
-          speed: a[3]! > 0,
-          lvlChg: a[4]! > 0,
-          hdgSel: a[5]! > 0,
-          lnav: a[6]! > 0,
-          app: a[7]! > 0,
-          altHld: a[8]! > 0,
-          vs: a[9]! > 0,
-          machMode: mach,
-          spd: mach ? Math.round(a[12]! * 100) / 100 : Math.round(a[11]!),
-          hdg: Math.round(a[13]!) % 360,
-          alt: Math.round(a[14]!),
-          vsFpm: Math.round(a[15]!),
-          crs: Math.round(a[16]!) % 360,
-        },
-        note: this.note,
-        sys: this.sysFrom(x),
-      });
+      this.title = this.sim.status().aircraftTitle || this.title;
+      this.publish({ aircraft: this.title, family: familyOf(this.title), lights, ap: this.apFrom(this.lastAp), note: this.note, sys: this.sysFrom(x), readOnly: this.readOnly() });
     });
     h.on("inputEventsList", (r) => {
+      // The list comes in chunks; entry 0 starts a fresh one (as Cobalt reads it).
+      if (r.entryNumber === 0) this.inputs.clear();
       for (const d of r.inputEventDescriptors) this.inputs.set(d.name, d.inputEventIdHash);
+      if (r.entryNumber + r.inputEventDescriptors.length >= r.outOf) this.watchAirlinerInputs();
+    });
+    h.on("subscribeInputEvent", (r) => {
+      const name = this.inputHashNames.get(r.inputEventIdHash);
+      if (name !== undefined && typeof r.value === "number") this.inputValues.set(name, r.value);
     });
     this.sim.labelSend?.(h.requestDataOnSimObject(REQ_PANEL, DEF_PANEL, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED), "lights and autopilot request");
     this.refreshInputEvents();
+    this.watchFenix();
+  }
+
+  /** Rebuilds the published state from the last readings plus the add-on overlays. */
+  private republish() {
+    if (!this.s || !this.lastLights) return;
+    this.publish({ ...this.s, ap: this.lastAp.length ? this.apFrom(this.lastAp) : this.s.ap, sys: this.lastSys.length ? this.sysFrom(this.lastSys) : this.s.sys });
+  }
+
+  /** The autopilot as the simulator reports it, with FlyByWire's own FCU lights laid over (Cobalt's A32NX overlay). */
+  /** The V/S window. iniBuilds keeps the window in one of the slot variables; follow whichever one moves. */
+  private vsFor(a: number[]): number {
+    if (addonOf(this.title) !== "airliner") return a[15]!;
+    const now = [a[15] ?? 0, a[21] ?? 0, a[22] ?? 0, a[23] ?? 0];
+    if (this.vsPrev.length) {
+      const moved = now.findIndex((v, i) => Math.abs(v - this.vsPrev[i]!) >= 1);
+      if (moved >= 0) this.vsSrc = moved;
+    }
+    this.vsPrev = now;
+    return now[this.vsSrc]!;
+  }
+
+  private apFrom(a: number[]): NonNullable<PanelState["ap"]> {
+    const mach = a[10]! > 0;
+    const ap: NonNullable<PanelState["ap"]> = {
+      master: a[0]! > 0,
+      fd: a[1]! > 0,
+      athr: a[2]! > 0,
+      speed: a[3]! > 0,
+      lvlChg: a[4]! > 0,
+      hdgSel: a[5]! > 0,
+      lnav: a[6]! > 0,
+      app: a[7]! > 0,
+      altHld: a[8]! > 0,
+      vs: a[9]! > 0,
+      machMode: mach,
+      spd: mach ? Math.round(a[12]! * 100) / 100 : Math.round(a[11]!),
+      hdg: Math.round(a[13]!) % 360,
+      alt: Math.round(a[14]!),
+      vsFpm: Math.round(this.vsFor(a)),
+      crs: Math.round(a[16]!) % 360,
+    };
+    const f = this.fbw;
+    if (f) {
+      Object.assign(ap, { master: f[0]! > 0.5, athr: f[1]! > 0.5, lnav: f[2]! > 0.5, app: f[3]! > 0.5 });
+      ap.managed = { spd: f[4]! > 0.5, hdg: f[5]! > 0.5, alt: f[6]! > 0.5 };
+    } else if (familyOf(this.title) === "airbus" && (addonOf(this.title) === "none" || addonOf(this.title) === "airliner") && (a[17] ?? 0) > 0) {
+      ap.managed = { spd: Math.round(a[17]!) === 2, hdg: Math.round(a[18] ?? 0) === 2, alt: Math.round(a[19] ?? 0) === 2 };
+    }
+    return ap;
+  }
+
+  /** Reads the Fenix's own switches (or FlyByWire's FCU lights) while one is loaded. */
+  private watchFenix() {
+    const h = this.h;
+    if (!h) return;
+    const fbw = addonOf(this.sim.status().aircraftTitle || this.title) === "fbw";
+    if (fbw !== this.fbwOn) {
+      this.fbwOn = fbw;
+      if (!fbw) this.fbw = null;
+      try {
+        h.requestDataOnSimObject(REQ_FBW, DEF_FBW, SimConnectConstants.OBJECT_ID_USER, fbw ? SimConnectPeriod.SECOND : SimConnectPeriod.NEVER);
+      } catch {
+        /* simulator gone */
+      }
+    }
+    const want = addonOf(this.sim.status().aircraftTitle || this.title) === "fenix";
+    if (want === this.fenixSwOn) return;
+    this.fenixSwOn = want;
+    if (!want) this.fenixSw = null;
+    try {
+      h.requestDataOnSimObject(REQ_FENIX_SW, DEF_FENIX_SW, SimConnectConstants.OBJECT_ID_USER, want ? SimConnectPeriod.SECOND : SimConnectPeriod.NEVER);
+    } catch {
+      /* simulator gone */
+    }
   }
 
   private lastSys: number[] = [];
@@ -256,7 +371,10 @@ export class SimPanel implements PanelBackend {
     this.lastSys = x;
     const cam = this.cameraStates();
     const state = x[15] ?? 2;
-    return {
+    const engineCount = Math.round(x[9] ?? 0);
+    const engines = [x[5], x[6], x[7], x[8]].slice(0, Math.max(0, engineCount)).map((v) => (v ?? 0) > 0);
+    const f = this.fenixSw;
+    const base = {
       flapsIndex: Math.round(x[0] ?? 0),
       flapsCount: Math.round(x[1] ?? 0),
       spoilersArmed: (x[2] ?? 0) > 0,
@@ -274,19 +392,96 @@ export class SimPanel implements PanelBackend {
       slew: (x[16] ?? 0) > 0,
       wingLeveler: (x[17] ?? 0) > 0,
       doors: [x[18], x[19], x[20], x[21]].map((v) => Math.round(v ?? 0)),
+      engines,
     };
+    // A Fenix shows its own switch positions (the standard variables don't follow every Fenix switch).
+    if (f) Object.assign(base, { spoilersArmed: !((f[0] ?? 1) > 0.5), parkingBrake: (f[1] ?? 0) > 0.5, seatbelts: (f[2] ?? 0) > 0.5, pitotHeat: (f[3] ?? 0) > 0.5, apuOn: (f[4] ?? 0) > 0.5 });
+    return base;
   }
 
-  /** The simulator's own list of cockpit controls changes with the aircraft. */
+  /**
+   * The simulator's own list of cockpit controls changes with the aircraft. Asked for when the aircraft changes, and
+   * again a few times while it is empty: right after the title changes the aircraft is often still loading and
+   * SimConnect answers with an error (Cobalt asks again once the aircraft has loaded).
+   */
   private refreshInputEvents() {
     if (!this.h || this.inputsFor === this.title) return;
     this.inputsFor = this.title;
     this.inputs.clear();
+    this.inputsTries = 0;
+    this.askInputEvents();
+  }
+  private askInputEvents() {
+    if (this.inputsTimer) clearTimeout(this.inputsTimer);
+    this.inputsTimer = null;
+    if (!this.h) return;
     try {
-      this.sim.labelSend?.(this.h.enumerateInputEvents(60), "list of the aircraft's input events");
+      this.h.enumerateInputEvents(60);
     } catch {
-      /* older simulator: the standard events are all there is */
+      return; /* older simulator: the standard events are all there is */
     }
+    const delays = [3000, 8000, 15000, 30000, 60000];
+    const wait = delays[this.inputsTries++];
+    if (wait === undefined) return;
+    const forTitle = this.title;
+    this.inputsTimer = setTimeout(() => {
+      if (this.title === forTitle && this.inputs.size === 0) this.askInputEvents();
+    }, wait);
+    this.inputsTimer.unref?.();
+  }
+
+  /** An input event's hash by the first name matching `patterns`; undefined when the aircraft has none. */
+  private input(patterns: RegExp[] | undefined): bigint | undefined {
+    const name = matchName(this.inputs.keys(), patterns);
+    return name ? this.inputs.get(name) : undefined;
+  }
+
+  /**
+   * iniBuilds: watch the values of the FCU and light input events, so a press can be sent as one change of value.
+   * (Their buttons rest at 1 or at 0 depending on the button, so "1 then 0" can be two presses or none.)
+   */
+  private watchAirlinerInputs() {
+    if (!this.h || addonOf(this.title) !== "airliner") return;
+    this.inputValues.clear();
+    this.inputHashNames.clear();
+    const patterns = [
+      ...Object.values(AIRLINER_FCU_BUTTON),
+      ...Object.values(AIRLINER_KNOB).flatMap((k) => [k.push, k.pull]),
+      ...Object.values(AIRLINER_LIGHT).map((l) => l!.names),
+    ];
+    for (const ps of patterns) {
+      const name = matchName(this.inputs.keys(), ps);
+      const hash = name ? this.inputs.get(name) : undefined;
+      if (!name || hash === undefined || this.inputHashNames.has(hash)) continue;
+      this.inputHashNames.set(hash, name);
+      try {
+        this.h.subscribeInputEvent(hash);
+      } catch {
+        /* older simulator */
+      }
+    }
+  }
+
+  /** One press of an iniBuilds button or knob push/pull: its input event set to the other value from where it rests. */
+  private async airlinerPress(patterns: RegExp[] | undefined): Promise<boolean> {
+    const name = matchName(this.inputs.keys(), patterns);
+    const hash = name ? this.inputs.get(name) : undefined;
+    if (!name || hash === undefined || !this.h) return false;
+    const now = this.inputValues.get(name);
+    if (now === undefined) {
+      await this.pulse(hash); // value not known yet: a press and release
+      return true;
+    }
+    this.h.setInputEvent(hash, now > 0 ? 0 : 1);
+    this.inputValues.set(name, now > 0 ? 0 : 1);
+    return true;
+  }
+
+  /** A momentary press through an input event: 1, then 0 (Cobalt's pulseInputEvent). */
+  private async pulse(hash: bigint) {
+    this.h?.setInputEvent(hash, 1);
+    await sleep(80);
+    this.h?.setInputEvent(hash, 0);
   }
 
   private fire(event: string, data: number) {
@@ -296,11 +491,11 @@ export class SimPanel implements PanelBackend {
     if (id === undefined) {
       id = EVENT_BASE + this.ids.size;
       h.mapClientEventToSimEvent(id, event);
-      h.addClientEventToNotificationGroup(GROUP_PANEL, id, false);
-      h.setNotificationGroupPriority(GROUP_PANEL, GROUP_PRIORITY_HIGHEST);
       this.ids.set(event, id);
     }
-    h.transmitClientEvent(SimConnectConstants.OBJECT_ID_USER, id, data, GROUP_PANEL, EventFlag.EVENT_FLAG_DEFAULT);
+    // As PMDG's SDK sample and Cobalt: the "group" is a priority (highest), flagged GROUPID_IS_PRIORITY. Add-on events
+    // such as PMDG's "#<number>" ones are picked up this way.
+    h.transmitClientEvent(SimConnectConstants.OBJECT_ID_USER, id, eventDword(data), GROUP_PRIORITY_HIGHEST, EventFlag.EVENT_FLAG_GROUPID_IS_PRIORITY);
     return true;
   }
 
@@ -331,6 +526,10 @@ export class SimPanel implements PanelBackend {
   async setLight(id: LightId, on: boolean): Promise<PanelResult> {
     if (!this.h || !this.s) return { ok: false, error: "Simulator not connected." };
     if (this.s.lights[id] === on) return { ok: true };
+    const fenix = await this.fenixLight(id, on);
+    if (fenix) return fenix;
+    const airliner = await this.airlinerLight(id, on);
+    if (airliner) return airliner;
     this.fire(LIGHT_EVENTS[id], 0);
     if (await this.until(() => this.s?.lights[id] === on)) return this.worked();
     // Add-on switches: try the aircraft's own input event if it has one.
@@ -343,6 +542,74 @@ export class SimPanel implements PanelBackend {
     return this.ignored(`The ${LABELS[id].toLowerCase()} light`);
   }
 
+  /** iniBuilds A340 / A350 / A380: the light switch's input event, each "on" position in turn until the light reports on. */
+  private async airlinerLight(id: LightId, on: boolean): Promise<PanelResult | null> {
+    const plan = AIRLINER_LIGHT[id];
+    if (!plan || addonOf(this.title) !== "airliner" || !this.h) return null;
+    const hash = this.input(plan.names);
+    if (hash === undefined) return null;
+    for (const v of on ? plan.on : [0]) {
+      this.h.setInputEvent(hash, v);
+      if (await this.until(() => this.s?.lights[id] === on, 1500)) return this.worked();
+    }
+    return this.sentUnchecked(`Sent to the ${LABELS[id].toLowerCase()} light switch, but the aircraft doesn't report that light to the simulator.`);
+  }
+
+  /** Fenix: the overhead light switch itself, checked by reading it back (Cobalt's fenixControlPlan). Null: not a Fenix switch, or no L:var channel. */
+  private async fenixLight(id: LightId, on: boolean): Promise<PanelResult | null> {
+    const plan = FENIX_LIGHT[id];
+    if (!plan || addonOf(this.title) !== "fenix" || !this.lv || !(await this.lv.ready())) return null;
+    const want = on ? plan.on : plan.off;
+    for (const name of plan.lvars) if (!this.lv.write(name, want)) return null;
+    const ok = await this.lv.confirm(plan.lvars[0]!, want);
+    if (ok === false) return null; // didn't move: try the standard event as well
+    return this.worked();
+  }
+
+  /** Fenix: a switch under Systems, through its own L:var. Null: not handled here. */
+  private async fenixSwitch(lvar: string, want: number, what: string): Promise<PanelResult | null> {
+    if (addonOf(this.title) !== "fenix" || !this.lv || !(await this.lv.ready())) return null;
+    if (!this.lv.write(lvar, want)) return null;
+    const ok = await this.lv.confirm(lvar, want);
+    if (ok === false) return this.ignored(what);
+    return this.worked();
+  }
+
+  /**
+   * Airbus FCU knob push (managed) / pull (selected), as Cobalt does it: FlyByWire's own events, the Fenix knob counter,
+   * or the default A320neo's slot-index events; checked against the managed dot (or slot index) where there is one.
+   */
+  async fcu(ctl: FcuKnob, action: "push" | "pull"): Promise<PanelResult> {
+    if (!this.h || !this.s?.ap) return { ok: false, error: "This aircraft isn't reporting its autopilot." };
+    const kind = addonOf(this.title);
+    const wantManaged = action === "push";
+    if (kind === "study") return { ok: false, error: "Push or pull this knob on the cockpit FCU: this aircraft keeps its FCU private." };
+    if (kind === "pmdg737" || kind === "ifly" || familyOf(this.title) === "boeing") return { ok: false, error: "This aircraft has a Boeing MCP, not an Airbus FCU." };
+    if (kind === "fenix") {
+      if (!this.lv || !(await this.lv.ready())) return { ok: false, error: "Use the Fenix FCU under Controls." };
+      if (!(await this.lv.add(FENIX_PUSH_PULL[ctl], wantManaged ? -1 : 1))) return this.ignored("That knob");
+      const dot = FENIX_MANAGED_DOT[ctl];
+      if (!dot) return this.worked();
+      const ok = await this.lv.confirm(dot, wantManaged ? 1 : 0);
+      return ok === false ? this.ignored("That knob") : this.worked();
+    }
+    if (kind === "airliner") {
+      if (!(await this.airlinerPress(AIRLINER_KNOB[ctl][action]))) return { ok: false, error: "This aircraft didn't list that FCU knob. Try again once it has finished loading." };
+      if (ctl !== "vs" && this.s.ap.managed !== undefined) {
+        const managedNow = () => this.s?.ap?.managed?.[ctl as "spd" | "hdg" | "alt"];
+        if (await this.until(() => managedNow() === wantManaged, 1500)) return this.worked();
+      }
+      return this.sentUnchecked(`${action === "push" ? "Pushed" : "Pulled"} on the FCU. This aircraft doesn't report the knob's managed dot.`);
+    }
+    const managedNow = () => this.s?.ap?.managed?.[ctl as "spd" | "hdg" | "alt"];
+    if (kind === "fbw") this.fire(FBW_PUSH_PULL[ctl][action], 0);
+    else this.fire(SLOT_INDEX_EVENT[ctl], wantManaged ? 2 : 1);
+    // V/S has no managed dot: sent, nothing to check it against.
+    if (ctl === "vs" || this.s.ap.managed === undefined) return this.sentUnchecked("Sent to the FCU. This aircraft doesn't report the knob's managed dot.");
+    if (await this.until(() => managedNow() === wantManaged, 2500)) return this.worked();
+    return this.ignored("That knob");
+  }
+
   async press(ctl: ApButton): Promise<PanelResult> {
     if (!this.h || !this.s?.ap) return { ok: false, error: "This aircraft isn't reporting its autopilot." };
     const { event, flag } = BUTTON_EVENTS[ctl];
@@ -350,9 +617,15 @@ export class SimPanel implements PanelBackend {
     const kind = addonOf(this.title);
     if (kind === "fbw" && FBW_BUTTON[ctl]) {
       this.fire(FBW_BUTTON[ctl]!, 0);
-      if (await this.until(() => this.s?.ap?.[flag] !== before, 1500)) return this.worked();
+      if (await this.until(() => this.s?.ap?.[flag] !== before, 2500)) return this.worked();
       // FlyByWire doesn't mirror every light into the standard variables, so a quiet button isn't proof it failed.
       return this.sentUnchecked("Sent to the FCU, but this aircraft doesn't report the result.");
+    }
+    if (kind === "airliner") {
+      if (!(await this.airlinerPress(AIRLINER_BUTTON[ctl]))) return { ok: false, error: "This aircraft has no such FCU button, or hasn't finished loading." };
+      if (await this.until(() => this.s?.ap?.[flag] !== before, 1500)) return this.worked();
+      // Don't fire the standard event on top: if the press did land, that would switch it straight back.
+      return this.sentUnchecked("Pressed on the FCU. This aircraft doesn't report that mode to the simulator, so the light here may not change.");
     }
     if (kind === "ifly") {
       const name = matchName(this.inputs.keys(), IFLY_BUTTON[ctl]);
@@ -416,6 +689,8 @@ export class SimPanel implements PanelBackend {
       const plan = pmdgPlan(ctl, this.current(ctl), value, ctl === "spd" && mach);
       if (!plan) return this.reached(ctl, value) ? this.worked() : null;
       await this.wheelClicks(plan.event, plan.flag, plan.count);
+    } else if (kind === "airliner") {
+      return this.airlinerSet(ctl, value);
     } else if (kind === "fbw") {
       if (ctl === "alt") this.fire(FBW_ALT_INCREMENT, 100);
       this.fire(FBW_SET[ctl], fbwValue(ctl, value, ctl === "spd" && mach));
@@ -440,11 +715,55 @@ export class SimPanel implements PanelBackend {
     return (await this.until(() => this.reached(ctl, value), 2500)) ? this.worked() : this.ignored("That window");
   }
 
+  /**
+   * iniBuilds A340 / A350 / A380: the FCU knob's input event. One write of +1 or -1 is one detent; which way and how far
+   * is learned the first time by watching the window (the aircraft keeps the standard autopilot values up to date).
+   * Null when the knob didn't move, so the standard events get their turn.
+   */
+  private async airlinerSet(ctl: "spd" | "hdg" | "alt" | "vs", value: number): Promise<PanelResult | null> {
+    const hash = this.input(AIRLINER_KNOB[ctl].turn);
+    if (hash === undefined || !this.h) return null;
+    const wrap = ctl === "hdg";
+    const diff = (a: number, b: number) => (wrap ? ((((a - b) % 360) + 540) % 360) - 180 : a - b);
+    const key = `${this.title}:${ctl}`;
+    let step = this.airlinerStep.get(key);
+    if (step === undefined) {
+      for (const v of [1, -1]) {
+        const before = this.current(ctl);
+        this.h.setInputEvent(hash, v);
+        if (await this.until(() => this.current(ctl) !== before, 900)) {
+          step = diff(this.current(ctl), before) * v; // how far +1 moves it
+          break;
+        }
+      }
+      if (!step) return null;
+      this.airlinerStep.set(key, step);
+    }
+    const tol = ctl === "alt" || ctl === "vs" ? 50 : ctl === "spd" && this.s?.ap?.machMode ? 0.006 : 1;
+    for (let round = 0; round < 4; round++) {
+      const d = diff(value, this.current(ctl));
+      if (Math.abs(d) <= tol) return this.worked();
+      const clicks = Math.min(500, Math.max(1, Math.round(Math.abs(d) / Math.abs(step))));
+      const dir = Math.sign(d) === Math.sign(step) ? 1 : -1;
+      const start = this.current(ctl);
+      for (let i = 0; i < clicks; i++) {
+        this.h.setInputEvent(hash, dir);
+        if ((i + 1) % 25 === 0) await sleep(25);
+      }
+      await this.until(() => Math.abs(diff(value, this.current(ctl))) <= tol, 1500);
+      if (this.current(ctl) === start) break; // stopped moving
+    }
+    return this.reached(ctl, value) ? this.worked() : this.ignored("That window");
+  }
+
   async set(ctl: ApKnob, value: number): Promise<PanelResult> {
     if (!this.h || !this.s?.ap) return { ok: false, error: "This aircraft isn't reporting its autopilot." };
+    if (addonOf(this.title) === "study") return { ok: false, error: STUDY_NOTE };
     const viaAddon = await this.addonSet(ctl, value);
     if (viaAddon) return viaAddon;
     const mach = ctl === "spd" && this.s.ap.machMode;
+    // Select the knob first (slot 1), so an Airbus in managed mode takes the value (Cobalt's "pre" events).
+    if (ctl === "spd" || ctl === "hdg" || ctl === "vs") this.fire(SLOT_INDEX_EVENT[ctl], 1);
     this.fire(SET_EVENTS[ctl] === "AP_SPD_VAR_SET" && mach ? "AP_MACH_VAR_SET" : SET_EVENTS[ctl], mach ? Math.round(value * 100) : Math.round(value));
     if (await this.until(() => this.reached(ctl, value))) return this.worked();
     return this.ignored("That window");
@@ -470,33 +789,66 @@ export class SimPanel implements PanelBackend {
         const edge = id === "flapsUp" ? before <= 0 : before >= x.flapsCount && x.flapsCount > 0;
         return edge ? { ok: false, error: id === "flapsUp" ? "The flaps are already up." : "The flaps are already fully down." } : this.ignored("The flaps");
       }
-      case "spoilersArm":
+      case "spoilersArm": {
         if (x.spoilersArmed === on) return { ok: true };
+        const viaFenix = await this.fenixSwitch(FENIX_SYS.spoilersArm.lvar, on ? FENIX_SYS.spoilersArm.on : FENIX_SYS.spoilersArm.off, "The spoilers");
+        if (viaFenix) return viaFenix;
         this.fire(on ? "SPOILERS_ARM_ON" : "SPOILERS_ARM_OFF", 0);
         return done(check((s) => s.spoilersArmed === on), "The spoilers");
+      }
       case "gear":
         if (x.gearDown === on) return { ok: true };
         this.fire(on ? "GEAR_DOWN" : "GEAR_UP", 0);
         return done(check((s) => s.gearDown === on), "The landing gear");
-      case "parkingBrake":
+      case "parkingBrake": {
         if (x.parkingBrake === on) return { ok: true };
+        const viaFenix = await this.fenixSwitch(FENIX_SYS.parkingBrake.lvar, on ? 1 : 0, "The parking brake");
+        if (viaFenix) return viaFenix;
         this.fire("PARKING_BRAKES", 0);
         return done(check((s) => s.parkingBrake === on), "The parking brake");
+      }
+      case "engine": {
+        // One engine: fuel valve + starter to start, fuel valve to stop (Cobalt's engine:start:n / engine:shutdown:n).
+        const n = Math.abs(Math.round(value ?? 0));
+        if (n < 1 || n > 4 || n > Math.max(1, x.engineCount)) return { ok: false, error: `This aircraft has no engine ${n}.` };
+        const start = (value ?? 0) > 0;
+        const running = () => !!this.sysNow()?.engines?.[n - 1];
+        if (running() === start) return { ok: true };
+        this.fire(`TOGGLE_FUEL_VALVE_ENG${n}`, 0);
+        if (start) this.fire(`TOGGLE_STARTER${n}`, 0);
+        return done(this.until(() => running() === start, start ? 60_000 : 20_000), `Engine ${n}`);
+      }
       case "engines":
         this.fire(on ? "ENGINE_AUTO_START" : "ENGINE_AUTO_SHUTDOWN", 0);
         return done(check((s) => (on ? s.enginesRunning > 0 : s.enginesRunning === 0), 15_000), on ? "Engine start" : "Engine shutdown");
       case "apu":
         if (x.apuOn === on) return { ok: true };
+        if (addonOf(this.title) === "fenix" && this.lv && (await this.lv.ready())) {
+          // Cobalt: APU MASTER on, wait 1.5 s, press START; off is MASTER off.
+          if (!this.lv.write(FENIX_SWITCH.apuMaster, on ? 1 : 0)) return this.ignored("The APU");
+          if (on) {
+            await sleep(FENIX_APU_START_DELAY_MS);
+            await this.lv.press(FENIX_SWITCH.apuStart);
+          }
+          const ok = await this.lv.confirm(FENIX_SWITCH.apuMaster, on ? 1 : 0);
+          return ok === false ? this.ignored("The APU") : this.worked();
+        }
         this.fire(on ? "APU_STARTER" : "APU_OFF_SWITCH", 1);
         return done(check((s) => s.apuOn === on, 3000), "The APU");
-      case "pitotHeat":
+      case "pitotHeat": {
         if (x.pitotHeat === on) return { ok: true };
+        const viaFenix = await this.fenixSwitch(FENIX_SYS.pitotHeat.lvar, on ? 1 : 0, "Probe heat");
+        if (viaFenix) return viaFenix;
         this.fire("PITOT_HEAT_TOGGLE", 0);
         return done(check((s) => s.pitotHeat === on), "Pitot heat");
-      case "seatbelts":
+      }
+      case "seatbelts": {
         if (x.seatbelts === on) return { ok: true };
+        const viaFenix = await this.fenixSwitch(FENIX_SYS.seatbelts.lvar, on ? 1 : 0, "The seat belt sign");
+        if (viaFenix) return viaFenix;
         this.fire("CABIN_SEATBELTS_ALERT_SWITCH_TOGGLE", 0);
         return done(check((s) => s.seatbelts === on), "The seat belt sign");
+      }
       case "baroStd":
         this.fire("BAROMETRIC_STD_PRESSURE", 0);
         return done(check((s) => Math.abs(s.baroHpa - 1013.2) < 1), "The altimeter");
@@ -588,6 +940,67 @@ export class SimPanel implements PanelBackend {
         }
         return done(check((s) => s.camera === (value ?? 0)), "The camera");
       }
+    }
+  }
+
+  /* ---------------------------------------------------------------- iniBuilds FCU screen (the Fenix-style FCU in the app) */
+
+  /** The FCU as the iniBuilds A340 / A350 / A380 reports it through the standard autopilot values; null for other aircraft. */
+  airlinerFcu(): FcuState | null {
+    const ap = this.s?.ap;
+    if (!ap || addonOf(this.title) !== "airliner") return null;
+    const baro = this.s?.sys?.baroHpa ?? 1013.2;
+    return {
+      aircraft: "inibuilds",
+      power: true,
+      spd: ap.spd,
+      spdIsMach: ap.machMode,
+      spdDashed: false,
+      spdManaged: !!ap.managed?.spd,
+      hdg: ap.hdg,
+      hdgDashed: false,
+      hdgManaged: !!ap.managed?.hdg,
+      trkFpa: (this.inputValues.get(matchName(this.inputValues.keys(), AIRLINER_FCU_BUTTON.hdgTrk) ?? "") ?? 0) > 1,
+      alt: ap.alt,
+      altManaged: !!ap.managed?.alt,
+      altStep: null,
+      vs: ap.vsFpm,
+      vsDashed: false,
+      lights: { ap1: ap.master, ap2: false, athr: ap.athr, loc: ap.lnav, appr: ap.app, exped: false },
+      efis1: { baroHpa: baro, baroInHg: Math.round((baro / 33.8639) * 100) / 100, ndMode: 0 },
+    };
+  }
+
+  /** Runs one FCU screen command on an iniBuilds aircraft. */
+  async airlinerCommand(cmd: CockpitCommand): Promise<PanelResult> {
+    if (!this.h || addonOf(this.title) !== "airliner") return { ok: false, error: "No iniBuilds A340 / A350 / A380 loaded." };
+    switch (cmd.op) {
+      case "turn": {
+        if (cmd.ctl === "baro1") return { ok: false, error: "Set the altimeter under Simulator and systems." };
+        const hash = this.input(AIRLINER_KNOB[cmd.ctl].turn);
+        if (hash === undefined) return { ok: false, error: "This aircraft didn't list that FCU knob. Try again once it has finished loading." };
+        const n = Math.abs(cmd.clicks);
+        const learned = this.airlinerStep.get(`${this.title}:${cmd.ctl}`);
+        // +1 turns clockwise unless the aircraft showed otherwise
+        const dir = Math.sign(cmd.clicks) * (learned !== undefined && learned < 0 ? -1 : 1);
+        for (let i = 0; i < n; i++) {
+          this.h.setInputEvent(hash, dir);
+          if ((i + 1) % 25 === 0) await sleep(25);
+        }
+        return { ok: true };
+      }
+      case "push":
+      case "pull":
+        if (cmd.ctl === "baro1") return { ok: false, error: "Set the altimeter under Simulator and systems." };
+        return this.fcu(cmd.ctl, cmd.op);
+      case "press": {
+        if (!(await this.airlinerPress(AIRLINER_FCU_BUTTON[cmd.ctl]))) return { ok: false, error: "This aircraft has no such FCU button." };
+        return { ok: true };
+      }
+      case "target":
+        return this.set(cmd.ctl, cmd.value);
+      case "ndMode":
+        return { ok: false, error: "The ND mode isn't available for this aircraft yet." };
     }
   }
 }

@@ -1,8 +1,9 @@
 # PMDG SDK headers
 
 VBuddy drives the PMDG 737 and 777 through the SDK files PMDG ships with the aircraft. It looks for them in
-your MSFS Community and Official folders by itself. If it can't find them (the bridge log says so), copy these
-files here:
+your MSFS Community and Official folders by itself. If it can't find them, copy these files into
+`%APPDATA%\VBuddy\sdk` (for the installed VBuddy; create the folder) or into this folder (when running from the
+source code):
 
 - `PMDG_NG3_SDK.h` (737) and/or `PMDG_777X_SDK.h` (777)
 

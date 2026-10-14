@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addonOf, fbwValue, incDecClicks, matchName, pmdgPlan, PMDG_WHEEL_DOWN, PMDG_WHEEL_UP } from "./addons.js";
+import { studyName, studyReadOnly } from "./addons.js";
 
 test("addons: the aircraft is recognised from its title, liveries and all", () => {
   assert.equal(addonOf("PMDG 737-800 NGXu Air India (VT-RXA)"), "pmdg737");
@@ -42,4 +43,11 @@ test("addons: iFly input events are found by name, and detents counted", () => {
   assert.equal(matchName(names, [/nothing/]), null);
   assert.equal(incDecClicks("alt", 10000, 11000), 10);
   assert.equal(incDecClicks("hdg", 350, 10), 20);
+});
+
+test("an FSLabs A321neo is a study airliner: the app is told it can't be operated from outside", () => {
+  const t = "FSLabs A321-252NX - IndiGo VT-ICF";
+  assert.equal(addonOf(t), "study");
+  assert.equal(studyName(t), "FSLabs A321neo");
+  assert.match(studyReadOnly(t), /^FSLabs A321neo keeps its cockpit private/);
 });
