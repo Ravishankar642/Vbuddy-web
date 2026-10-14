@@ -15,3 +15,7 @@ release/
 *.tar.gz
 *.tgz
 release/
+aircraft-report-*.json
+plugin/**/obj/
+plugin/**/bin/
+*.nuget.*
