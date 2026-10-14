@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    VBuddy Link: a small vPilot plugin that hands vPilot's chat and network events to the VBuddy bridge
+    on this PC, and runs the bridge's commands (connect, disconnect, send message, ident).
+
+        dotnet build VBuddyLink.csproj -c Release
+    Output: bin\Release\VBuddyLink.dll  -> copy to %LOCALAPPDATA%\vPilot\Plugins
+
+    The only thing you may need to edit is VpilotSdk below, if vPilot isn't in %LocalAppData%\vPilot.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>VBuddyLink</AssemblyName>
+    <RootNamespace>VBuddyLink</RootNamespace>
+    <OutputType>Library</OutputType>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <Version>1.0.0</Version>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <VpilotSdk Condition="'$(VpilotSdk)' == ''">$(LOCALAPPDATA)\vPilot\RossCarlson.Vatsim.Vpilot.Plugins.dll</VpilotSdk>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private=False: a copy of vPilot's own DLL inside the Plugins folder breaks vPilot plugins. -->
+    <Reference Include="RossCarlson.Vatsim.Vpilot.Plugins">
+      <HintPath>$(VpilotSdk)</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+</Project>

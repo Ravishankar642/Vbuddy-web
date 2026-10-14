@@ -1,0 +1,33 @@
+{
+  "name": "@vbuddy/relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runs on a small cloud VM (e.g. Oracle Cloud): lets phones and tablets reach your bridge over https without port-forwarding",
+  "type": "module",
+  "bin": {
+    "vbuddy-relay": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "test": "node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@vbuddy/protocol": "workspace:*",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "~5.9.3"
+  },
+  "main": "./dist/relay.js",
+  "types": "./dist/relay.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/relay.d.ts",
+      "import": "./dist/relay.js"
+    }
+  }
+}

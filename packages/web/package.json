@@ -1,0 +1,31 @@
+{
+  "name": "@vbuddy/web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VBuddy web client (becomes the PWA)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource/barlow-condensed": "^5.3.0",
+    "@vbuddy/protocol": "workspace:*",
+    "leaflet": "1.9.4",
+    "qrcode-generator": "^2.0.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "~1.9.22",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.12"
+  }
+}

@@ -1,0 +1,5 @@
+# Replace with your own address, e.g. mycockpit.duckdns.org (setup.sh fills it in).
+# Caddy gets and renews the https certificate by itself and passes websockets through.
+{$VBUDDY_DOMAIN} {
+	reverse_proxy 127.0.0.1:8080
+}

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#5c0632" />
+    <title>VBuddy</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/fonts.css" />
+    <link rel="stylesheet" href="/src/console/console.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="side">
+        <div class="brand">
+          <img src="/icons/icon-192.png" alt="" width="36" height="36" />
+          <div>
+            <h1>VBuddy</h1>
+            <p id="version" class="muted">&nbsp;</p>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Pages">
+          <button type="button" data-nav="connect" aria-current="page"><svg viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0M8.2 15.7a5.5 5.5 0 0 1 7.6 0M12 19h.01"/></svg><span>Connect</span></button>
+          <button type="button" data-nav="map"><svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2ZM9 4v14M15 6v14"/></svg><span>Live map</span></button>
+          <button type="button" data-nav="flights"><svg viewBox="0 0 24 24"><path d="M3 11.5 21 4l-4 16-5-6-4 3 1-5.5-6-.5Z"/></svg><span>Flights</span></button>
+          <button type="button" data-nav="systems"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><span>Systems</span></button>
+          <button type="button" data-nav="efb" hidden><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span>Fenix EFB</span></button>
+          <button type="button" data-nav="atlas"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span>Atlas</span></button>
+          <button type="button" data-nav="activity"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span></button>
+          <button type="button" data-nav="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg><span>Settings</span></button>
+        </nav>
+        <section class="pills" aria-label="Status">
+          <div class="pill" id="pSim"><span class="dot"></span><div><b>Simulator</b><small id="pSimText">…</small></div></div>
+          <div class="pill" id="pVp"><span class="dot"></span><div><b>vPilot</b><small id="pVpText">…</small></div></div>
+          <div class="pill" id="pDev"><span class="dot"></span><div><b>Devices</b><small id="pDevText">…</small></div></div>
+        </section>
+        <a class="btn" id="openApp" href="/" target="_blank" rel="noopener">Open in browser</a>
+      </aside>
+
+      <main class="main">
+        <p id="banner" class="banner" hidden></p>
+
+        <div class="page" data-page="connect">
+          <h2 class="ptitle">Connect</h2>
+          <section class="card" id="homeCard">
+            <h2>Phone or tablet on your home Wi-Fi</h2>
+            <p class="muted">Both must be on the same Wi-Fi network.</p>
+            <ol class="steps">
+              <li>On this PC, press the Windows key, type <b>cmd</b> and open <b>Command Prompt</b>.</li>
+              <li>Type <code>ipconfig</code> and press Enter. Find <b>IPv4 Address</b> under your Wi-Fi or Ethernet adapter, for example <code>192.168.1.23</code>.</li>
+              <li>On the phone or tablet, open <code id="addrExample">http://&lt;your IPv4 address&gt;:4789</code> in the browser.</li>
+            </ol>
+            <p class="muted">If it will not open, set this PC's network to <b>Private</b> in Windows settings (Network &amp; Internet, Wi-Fi, your network).</p>
+          </section>
+
+          <section class="card" id="codeCard">
+            <h2>Pairing code</h2>
+            <p class="muted">Type this code on the device's <b>Systems → Controls</b> page to let it control the aircraft. One code pairs one device.</p>
+            <div class="code" id="code" aria-live="polite">------</div>
+            <div class="row">
+              <small class="muted" id="codeTtl"></small>
+              <button class="btn" id="newCode">New code</button>
+            </div>
+          </section>
+
+          <section class="card" id="relayCard">
+            <div class="row head">
+              <h2>Away from home (cloud relay)</h2>
+              <label class="switch"><input type="checkbox" id="relayOn" /><span class="track"></span><span class="sr">Cloud relay</span></label>
+            </div>
+            <p class="muted" id="relayText"></p>
+            <div id="relayLink" hidden>
+              <div class="link"><code id="relayUrl"></code><button class="btn" id="copyRelay">Copy</button><button class="btn" id="qrRelay">QR</button></div>
+              <div id="relayQr" class="qr" hidden></div>
+            </div>
+            <p class="status" id="relayStatus"></p>
+          </section>
+
+          <section class="card" id="devicesCard">
+            <h2>Paired devices</h2>
+            <ul id="devices" class="devices"></ul>
+            <p class="muted" id="noDevices">None yet.</p>
+          </section>
+        </div>
+
+        <div class="page page--frame" data-page="map" hidden></div>
+
+        <div class="page" data-page="activity" hidden>
+          <div class="row head">
+            <h2 class="ptitle">Activity</h2>
+            <label class="inline"><input type="checkbox" id="problemsOnly" /> Problems only</label>
+          </div>
+          <section class="card card--log">
+            <ol id="activityLog" class="log" aria-live="polite"></ol>
+            <p class="muted" id="activityEmpty" hidden>Nothing to show yet.</p>
+          </section>
+        </div>
+
+        <div class="page" data-page="settings" hidden>
+          <h2 class="ptitle">Settings</h2>
+
+          <section class="card" id="simCard">
+            <h2>Simulator</h2>
+            <p class="muted" id="simText"></p>
+            <div class="row"><small class="status muted" id="simStatus"></small><button class="btn" id="reconnectSim" type="button">Reconnect to MSFS</button></div>
+          </section>
+
+          <section class="card" id="pauseCard">
+            <h2>Pause the simulator later</h2>
+            <p class="muted">Held on this PC, so it still happens when your phone is away. It pauses once, then clears itself.</p>
+            <p class="status" id="pauseNow" hidden></p>
+            <div class="pausegrid">
+              <label class="field"><b>When</b>
+                <select class="text" id="pauseMode"><option value="atTime">At a time</option><option value="beforeTod">Before top of descent</option></select>
+              </label>
+              <label class="field" id="pauseTimeBox"><b>Time</b><input class="text" id="pauseTime" type="time" /></label>
+              <label class="field" id="pauseLeadBox" hidden><b>Minutes before</b><input class="text" id="pauseLead" type="number" min="0" max="60" value="5" /></label>
+            </div>
+            <div class="row"><small class="status" id="pauseStatus"></small><span class="actions"><button class="btn" id="pauseCancel" type="button" hidden>Cancel pause</button><button class="btn primary" id="pauseSet" type="button">Set pause</button></span></div>
+          </section>
+
+          <section class="card" id="startCard">
+            <div class="row head">
+              <h2>Start VBuddy when I sign in to Windows</h2>
+              <label class="switch"><input type="checkbox" id="autostartOn" /><span class="track"></span><span class="sr">Start with Windows</span></label>
+            </div>
+            <p class="muted" id="autostartText"></p>
+          </section>
+
+          <section class="card" id="pluginCard">
+            <h2>vPilot plugin</h2>
+            <p class="muted" id="pluginText"></p>
+            <div class="row"><small class="status muted" id="pluginStatus"></small><button class="btn primary" id="installPlugin" type="button">Install plugin</button></div>
+          </section>
+
+          <section class="card" id="accountsCard">
+            <h2>Your accounts</h2>
+            <p class="muted">Saved on this PC only. They are never sent to the relay or to your phone.</p>
+            <label class="field" for="simbrief"><b>SimBrief name or pilot ID</b><small class="muted">Loads your flight plan and airport weather, and decides which flights are logged in the Atlas.</small></label>
+            <input class="text" id="simbrief" type="text" autocomplete="off" spellcheck="false" maxlength="40" placeholder="e.g. jsmith or 123456" />
+            <label class="field" for="hoppie"><b>Hoppie logon code</b><small class="muted">For ACARS messages. <span id="hoppieState"></span></small></label>
+            <input class="text" id="hoppie" type="password" autocomplete="off" spellcheck="false" maxlength="40" placeholder="Paste your logon code" />
+            <div class="row">
+              <small class="status" id="accountsStatus"></small>
+              <span class="actions"><button class="btn" id="clearHoppie" type="button">Remove Hoppie code</button><button class="btn primary" id="saveAccounts" type="button">Save</button></span>
+            </div>
+          </section>
+
+          <footer class="muted"><span id="dataDir"></span></footer>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/console/console.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+fenix-report*.json
+data/
+release/
+
+# secrets and build output
+*.key
+*.pem
+*.pfx
+*.tar.gz
+*.tgz
+release/

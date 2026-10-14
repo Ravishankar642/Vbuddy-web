@@ -1,0 +1,33 @@
+{
+  "name": "vbuddy-webapp",
+  "private": true,
+  "version": "1.0.0",
+  "description": "VBuddy: open-source flight simulator companion (bridge + web client)",
+  "license": "GPL-3.0-or-later",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "dev": "pnpm --filter @vbuddy/protocol build && pnpm --parallel --filter @vbuddy/bridge --filter @vbuddy/web dev",
+    "dev:mock": "pnpm --filter @vbuddy/protocol build && pnpm --parallel --filter @vbuddy/bridge --filter @vbuddy/web dev:mock",
+    "start": "pnpm build && pnpm --filter @vbuddy/bridge start",
+    "start:mock": "pnpm build && pnpm --filter @vbuddy/bridge start:mock",
+    "fenix:discover": "pnpm --filter @vbuddy/protocol build && pnpm --filter @vbuddy/bridge fenix:discover",
+    "aircraft:discover": "pnpm --filter @vbuddy/protocol build && pnpm --filter @vbuddy/bridge aircraft:discover",
+    "pmdg:dump": "pnpm --filter @vbuddy/bridge pmdg:dump",
+    "start:mock-quick": "pnpm build && pnpm --filter @vbuddy/bridge start:mock-quick",
+    "dev:mock-quick": "pnpm --filter @vbuddy/protocol build && pnpm --parallel --filter @vbuddy/bridge --filter @vbuddy/web dev:mock-quick",
+    "package": "node scripts/package.mjs",
+    "package:local": "node scripts/package.mjs --edition local",
+    "package:both": "node scripts/package.mjs --edition both"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "fflate": "^0.8.3",
+    "typescript": "~5.9.3"
+  }
+}

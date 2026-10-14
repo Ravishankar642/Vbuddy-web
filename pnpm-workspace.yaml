@@ -1,0 +1,6 @@
+packages:
+  - "packages/*"
+
+# Allow esbuild (used by Vite and tsx) to run its install step.
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,212 @@
+import type { SimStatus } from "@vbuddy/protocol";
+import { DataRequestFlag, EventFlag, RawBuffer, SimConnectConstants, SimConnectDataType, SimConnectPeriod, type ConnectionHandle } from "node-simconnect";
+import type { RadioBackend, RadioValues } from "./backend.js";
+
+const DEF_COMMS = 50;
+const REQ_COMMS = 50;
+const DEF_XPDR_STATE = 51;
+const DEF_FREQ_BASE = 60;
+const DEF_LISTEN_BASE = 64;
+const EVENT_BASE = 200;
+/** A real notification group: SimConnect rejects events sent to a group id it has never been told about (UNRECOGNIZED_ID). */
+const GROUP_RADIOS = 60;
+const GROUP_PRIORITY_HIGHEST = 1;
+
+const VARS: Array<[string, string]> = [
+  ["COM ACTIVE FREQUENCY:1", "Hz"],
+  ["COM STANDBY FREQUENCY:1", "Hz"],
+  ["COM ACTIVE FREQUENCY:2", "Hz"],
+  ["COM STANDBY FREQUENCY:2", "Hz"],
+  ["TRANSPONDER CODE:1", "Bco16"],
+  ["TRANSPONDER STATE:1", "Enum"],
+  ["TRANSPONDER IDENT:1", "Bool"],
+  ["COM RECEIVE:1", "Bool"],
+  ["COM RECEIVE:2", "Bool"],
+];
+
+const EVENTS = {
+  com1Active: "COM_RADIO_SET_HZ",
+  com2Active: "COM2_RADIO_SET_HZ",
+  com1Standby: "COM_STBY_RADIO_SET_HZ",
+  com2Standby: "COM2_STBY_RADIO_SET_HZ",
+  com1Swap: "COM_STBY_RADIO_SWAP",
+  com2Swap: "COM2_RADIO_SWAP",
+  com1ActiveBcd: "COM_RADIO_SET",
+  com2ActiveBcd: "COM2_RADIO_SET",
+  com1StandbyBcd: "COM_STBY_RADIO_SET",
+  com2StandbyBcd: "COM2_STBY_RADIO_SET",
+  com1Listen: "COM1_RECEIVE_SELECT",
+  com2Listen: "COM2_RECEIVE_SELECT",
+  xpdrSet: "XPNDR_SET",
+  xpdrIdent: "XPNDR_IDENT_ON",
+} as const;
+type EventKey = keyof typeof EVENTS;
+
+interface SimLike {
+  onHandle(cb: (h: ConnectionHandle | null) => void): void;
+  onStatus(cb: (s: SimStatus) => void): void;
+  status(): SimStatus;
+  labelSend?(sendId: number, what: string): void;
+}
+
+const XPDR_MODE: Record<number, "off" | "stby" | "alt"> = { 0: "off", 1: "stby", 4: "alt" };
+
+/**
+ * COM1/COM2 and the transponder, read from SimConnect whenever one changes and set with the
+ * simulator's own radio events (the same ones the old VBuddy plugin used). vPilot follows the sim's radios,
+ * so tuning here is what vPilot hears on.
+ */
+export class SimRadios implements RadioBackend {
+  private h: ConnectionHandle | null = null;
+  private v: RadioValues | null = null;
+  private cbs: Array<() => void> = [];
+  private ids = new Map<EventKey, number>();
+  private stateDefReady = false;
+  private freqDefs = new Set<number>();
+
+  constructor(private sim: SimLike) {
+    sim.onHandle((h) => this.attach(h));
+    sim.onStatus((s) => {
+      if (!s.connected) this.set(null);
+    });
+  }
+
+  private attach(h: ConnectionHandle | null) {
+    this.h = h;
+    this.ids.clear();
+    this.stateDefReady = false;
+    this.freqDefs.clear();
+    this.set(null);
+    if (!h) return;
+    for (const [name, unit] of VARS) this.sim.labelSend?.(h.addToDataDefinition(DEF_COMMS, name, unit, SimConnectDataType.FLOAT64), name);
+    h.on("simObjectData", (r) => {
+      if (r.requestID !== REQ_COMMS || h !== this.h) return;
+      const n = VARS.map(() => r.data.readFloat64());
+      const code = Math.round(n[4]!).toString(16).padStart(4, "0"); // Bco16: each digit is a hex nibble (squawk 1200 arrives as 0x1200 = 4608)
+      const state = Math.round(n[5]!);
+      this.set({
+        radios: {
+          com1: { active: Math.round(n[0]!), standby: Math.round(n[1]!), rx: n[7]! > 0 },
+          com2: { active: Math.round(n[2]!), standby: Math.round(n[3]!), rx: n[8]! > 0 },
+        },
+        xpdr: { code: /^[0-7]{4}$/.test(code) ? code : "0000", mode: XPDR_MODE[state] ?? "other", ident: n[6]! > 0 },
+      });
+    });
+    this.sim.labelSend?.(h.requestDataOnSimObject(REQ_COMMS, DEF_COMMS, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED), "radios request");
+  }
+
+  private set(v: RadioValues | null) {
+    this.v = v;
+    for (const cb of this.cbs) cb();
+  }
+  values() {
+    return this.v;
+  }
+  onValues(cb: () => void) {
+    this.cbs.push(cb);
+  }
+
+  private fire(key: EventKey, data: number): boolean {
+    const h = this.h;
+    if (!h || !this.v) return false;
+    let id = this.ids.get(key);
+    if (id === undefined) {
+      id = EVENT_BASE + this.ids.size;
+      h.mapClientEventToSimEvent(id, EVENTS[key]);
+      h.addClientEventToNotificationGroup(GROUP_RADIOS, id, false);
+      h.setNotificationGroupPriority(GROUP_RADIOS, GROUP_PRIORITY_HIGHEST);
+      this.ids.set(key, id);
+    }
+    h.transmitClientEvent(SimConnectConstants.OBJECT_ID_USER, id, data, GROUP_RADIOS, EventFlag.EVENT_FLAG_DEFAULT);
+    return true;
+  }
+
+  /**
+   * Tunes a radio. Aircraft differ in which way in they listen, so this tries the sim's Hz event first, then the
+   * classic BCD event, then writes the frequency variable directly, moving on only if the radio didn't change.
+   */
+  setCom(radio: 1 | 2, which: "active" | "standby", hz: number) {
+    if (!this.h || !this.v) return false;
+    const name = which === "active" ? "Active" : "Standby";
+    const reached = () => {
+      const r = this.v?.radios?.[`com${radio}` as "com1" | "com2"];
+      return !!r && Math.abs(r[which] - hz) < 5000;
+    };
+    const attempts: Array<() => void> = [
+      () => void this.fire(`com${radio}${name}` as EventKey, hz),
+      () => void this.fire(`com${radio}${name}Bcd` as EventKey, parseInt(String(Math.round((hz - 100_000_000) / 10_000)).padStart(4, "0"), 16)),
+      () => this.writeFreq(radio, which, hz),
+    ];
+    const run = (i: number) => {
+      if (i >= attempts.length || this.h === null) return;
+      attempts[i]!();
+      setTimeout(() => {
+        if (!reached()) run(i + 1);
+      }, 600);
+    };
+    run(0);
+    return true;
+  }
+  private writeFreq(radio: 1 | 2, which: "active" | "standby", hz: number) {
+    const h = this.h;
+    if (!h) return;
+    const def = DEF_FREQ_BASE + (radio - 1) * 2 + (which === "active" ? 0 : 1);
+    if (!this.freqDefs.has(def)) {
+      h.addToDataDefinition(def, `COM ${which === "active" ? "ACTIVE" : "STANDBY"} FREQUENCY:${radio}`, "Hz", SimConnectDataType.FLOAT64);
+      this.freqDefs.add(def);
+    }
+    const b = new RawBuffer(8);
+    b.writeFloat64(hz);
+    h.setDataOnSimObject(def, SimConnectConstants.OBJECT_ID_USER, { buffer: b, arrayCount: 0, tagged: false });
+  }
+  /** The audio panel's receive switch: the sim's select event first, then the variable itself. */
+  setListen(radio: 1 | 2, on: boolean) {
+    if (!this.h || !this.v?.radios) return false;
+    const key = radio === 1 ? "com1" : "com2";
+    const reached = () => this.v?.radios?.[key].rx === on;
+    if (reached()) return true;
+    const attempts: Array<() => void> = [() => void this.fire(`com${radio}Listen` as EventKey, 0), () => this.writeListen(radio, on)];
+    const run = (i: number) => {
+      if (i >= attempts.length || this.h === null) return;
+      attempts[i]!();
+      setTimeout(() => {
+        if (!reached()) run(i + 1);
+      }, 600);
+    };
+    run(0);
+    return true;
+  }
+  private writeListen(radio: 1 | 2, on: boolean) {
+    const h = this.h;
+    if (!h) return;
+    const def = DEF_LISTEN_BASE + radio;
+    if (!this.freqDefs.has(def)) {
+      h.addToDataDefinition(def, `COM RECEIVE:${radio}`, "Bool", SimConnectDataType.FLOAT64);
+      this.freqDefs.add(def);
+    }
+    const b = new RawBuffer(8);
+    b.writeFloat64(on ? 1 : 0);
+    h.setDataOnSimObject(def, SimConnectConstants.OBJECT_ID_USER, { buffer: b, arrayCount: 0, tagged: false });
+  }
+  swapCom(radio: 1 | 2) {
+    return this.fire(radio === 1 ? "com1Swap" : "com2Swap", 0);
+  }
+  setXpdrCode(code: string) {
+    return this.fire("xpdrSet", parseInt(code, 16)); // the event takes the four digits as BCD
+  }
+  setXpdrMode(mode: "stby" | "alt") {
+    const h = this.h;
+    if (!h || !this.v) return false;
+    if (!this.stateDefReady) {
+      h.addToDataDefinition(DEF_XPDR_STATE, "TRANSPONDER STATE:1", "Enum", SimConnectDataType.FLOAT64);
+      this.stateDefReady = true;
+    }
+    const b = new RawBuffer(8);
+    b.writeFloat64(mode === "alt" ? 4 : 1);
+    h.setDataOnSimObject(DEF_XPDR_STATE, SimConnectConstants.OBJECT_ID_USER, { buffer: b, arrayCount: 0, tagged: false });
+    return true;
+  }
+  ident() {
+    return this.fire("xpdrIdent", 1);
+  }
+}

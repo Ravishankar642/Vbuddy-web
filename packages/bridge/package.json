@@ -1,0 +1,38 @@
+{
+  "name": "@vbuddy/bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Runs on the simulator PC: reads MSFS via SimConnect and streams it to VBuddy clients",
+  "type": "module",
+  "bin": {
+    "vbuddy-bridge": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "dev:mock": "tsx watch src/index.ts --mock",
+    "start": "node dist/index.js",
+    "start:mock": "node dist/index.js --mock",
+    "fenix:discover": "tsx src/tools/fenix-discover.ts",
+    "aircraft:discover": "tsx src/tools/aircraft-discover.ts",
+    "pmdg:dump": "tsx src/tools/pmdg-dump.ts",
+    "test": "node --test \"dist/**/*.test.js\"",
+    "start:mock-quick": "node dist/index.js --mock --mock-quick",
+    "dev:mock-quick": "tsx watch src/index.ts --mock --mock-quick"
+  },
+  "dependencies": {
+    "@vbuddy/protocol": "workspace:*",
+    "node-simconnect": "^4.2.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
+    "@vbuddy/relay": "workspace:*",
+    "tsx": "^4.20.6",
+    "typescript": "~5.9.3"
+  }
+}
