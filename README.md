@@ -2,15 +2,15 @@
 
 A free companion for Microsoft Flight Simulator. VBuddy runs on your sim PC and puts your flight on your phone, tablet or any browser: a live map with VATSIM traffic, your aircraft's systems, cockpit controls, a landing analyzer, radios and chat, and a remote view of the sim. Nothing to install on the phone.
 
-Version 1.1.0 · Windows · MSFS 2024 (and 2020) · [What's new](CHANGELOG.md)
+Version 1.1.1 · Windows · MSFS 2024 (and 2020) · [What's new](CHANGELOG.md)
 
 ---
 
 ## Get started
 
 1. **Download** the installer from the [Releases page](https://github.com/Ravishankar642/Vbuddy-web/releases):
-   - `VBuddy-Setup-1.1.0.exe`: works at home **and** away from home (optional cloud relay).
-   - `VBuddy-Local-Setup-1.1.0.exe`: home network only. It never connects to any VBuddy server.
+   - `VBuddy-Setup-1.1.1.exe`: works at home **and** away from home (optional cloud relay).
+   - `VBuddy-Local-Setup-1.1.1.exe`: home network only. It never connects to any VBuddy server.
 
    Both include everything they need; you don't need Node.js or anything else. To share VBuddy with a friend, just send them the installer.
 2. **Run the installer.** It opens VBuddy's port (TCP 4789) in Windows Firewall for you. Leave these ticked if you want them:
@@ -71,24 +71,28 @@ On a paired, installed device (through the cloud relay): ATC boundary ahead, tou
 | Aircraft | What works |
 |---|---|
 | **Fenix A320** | Full FCU and captain's EFIS with real knobs, lights, radios, and the **Fenix EFB** inside VBuddy. Needs the free MobiFlight WASM module in your Community folder if the FCU says it isn't reaching the aircraft. |
-| **PMDG 737 and 777** | MCP (speed, heading, altitude, V/S, course on the 737) with its lights, and the **CDU** (Systems → CDU). Needs a one-time setup, below. |
+| **PMDG 737 and 777** | MCP (speed, heading, altitude, V/S, course on the 737) with its lights, and the **CDU** (Systems → CDU). Sets itself up (below). |
 | **iniBuilds A340, A350, A380** | The same FCU screen as the Fenix: knobs, push/pull, AP, A/THR, LOC, APPR, FD and more, plus lights. Some FCU lights in the app may stay dark if the aircraft doesn't report them. |
 | **FlyByWire A32NX / A380X** | Airbus FCU and lights. |
 | **iFly 737 MAX** | MCP buttons and knobs. |
 | **Default and most other aircraft** | Autopilot panel and lights through the simulator's standard controls. |
 | **FSLabs, ToLiss, iniBuilds A300/A310** | These aircraft keep their cockpit private, so the autopilot and lights can't be operated from outside. Everything else (map, systems, landings, simulator controls) works. |
 
-### PMDG one-time setup
-1. **SDK files.** In the aircraft's package, open `Documentation\SDK` and copy `PMDG_NG3_SDK.h` (737) and/or `PMDG_777X_SDK.h` (777) into `%APPDATA%\VBuddy\sdk` (create the `sdk` folder). The app tells you if they're missing.
-2. **Turn on PMDG's data.** In the aircraft's `work` folder, open `737_Options.ini` or `777_Options.ini` and make sure the `[SDK]` section has:
-   ```
-   [SDK]
-   EnableDataBroadcast=1
-   EnableCDUBroadcast.0=1
-   EnableCDUBroadcast.1=1
-   ```
-   On the 777 also add `EnableCDUBroadcast.2=1`. For the MSFS 2024 Microsoft Store version the work folders are under `%LOCALAPPDATA%\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalState\WASM\MSFS2024\` (`pmdg-aircraft-738\work`, `pmdg-aircraft-77w\work`).
-3. Restart VBuddy and reload the aircraft.
+### PMDG setup
+There's nothing to do by hand. When VBuddy starts, and every time you change aircraft, it:
+- copies the aircraft's SDK file (`PMDG_NG3_SDK.h` for the 737, `PMDG_777X_SDK.h` for the 777) from its package into `%APPDATA%\VBuddy\sdk`, and copies it again after an aircraft update;
+- turns on PMDG's data and CDU screens in the aircraft's `737_Options.ini` / `777_Options.ini`. It keeps a backup of the original as `.vbuddy-backup` the first time.
+
+PMDG creates its options file the first time you load the aircraft. So on a new install, fly it once with VBuddy running. When the app says VBuddy has just turned the data on, reload the aircraft.
+
+If the app still says it can't find the SDK file, copy it yourself from the aircraft's `Documentation\SDK` folder into `%APPDATA%\VBuddy\sdk`. To turn the data on by hand, add these lines to the options file in the aircraft's `work` folder:
+```
+[SDK]
+EnableDataBroadcast=1
+EnableCDUBroadcast.0=1
+EnableCDUBroadcast.1=1
+```
+On the 777, also add `EnableCDUBroadcast.2=1`.
 
 ---
 
@@ -111,7 +115,7 @@ Your flights, landings, paired devices and settings live in `%APPDATA%\VBuddy` a
 | No tray icon | Some antivirus tools block it. Start *VBuddy with a window (for troubleshooting)* from the Start menu instead. |
 | Buttons are greyed out / view-only | Pair the device: Systems → Controls, then the code from the VBuddy window. |
 | Chat or VATSIM connect doesn't work | Install the VBuddy Link plugin for vPilot (re-run the installer), restart vPilot, then VBuddy. |
-| PMDG values don't move, or no CDU | Do the PMDG one-time setup above, then reload the aircraft. |
+| PMDG values don't move, or no CDU | Reload the aircraft (VBuddy turns PMDG's data on, but the aircraft only reads it when it loads). If it still doesn't work, see PMDG setup above. |
 | An aircraft ignores a control | Start menu → *VBuddy find aircraft controls* makes a report of what the aircraft offers. Send it along with the log (tray icon → *View log*). |
 
 ---

@@ -17,7 +17,8 @@ function userCfgFiles(): string[] {
   return out;
 }
 
-function installedPackagesPaths(): string[] {
+/** The folders that hold the simulator's packages (InstalledPackagesPath from UserCfg.opt, plus the usual defaults). */
+export function installedPackagesPaths(): string[] {
   const found = new Set<string>();
   for (const f of userCfgFiles()) {
     try {
@@ -37,14 +38,60 @@ function installedPackagesPaths(): string[] {
   return [...found];
 }
 
+/** Folders in `dir`, including links and junctions to folders (add-on linkers and a moved Community folder use them). */
 function subdirs(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
+      .filter((d) => {
+        if (d.isDirectory()) return true;
+        if (!d.isSymbolicLink()) return false;
+        try {
+          return statSync(join(dir, d.name)).isDirectory();
+        } catch {
+          return false; // a broken link
+        }
+      })
       .map((d) => join(dir, d.name));
   } catch {
     return [];
   }
+}
+
+/**
+ * Every PMDG package in the simulator's package folders: Community (and Community2024 and the like),
+ * Official / Official2024 (one folder per store: OneStore, Steam) and StreamedPackages.
+ */
+export function pmdgPackageDirs(roots: string[] = installedPackagesPaths()): string[] {
+  const out: string[] = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const base of subdirs(root)) {
+      const name = base.split(/[\\/]/).pop() ?? "";
+      let packages: string[] = [];
+      if (/^community/i.test(name) || /^streamedpackages$/i.test(name)) packages = subdirs(base);
+      else if (/^official/i.test(name)) for (const ch of subdirs(base)) packages.push(...subdirs(ch));
+      out.push(...packages.filter((p) => /pmdg/i.test(p.split(/[\\/]/).pop() ?? "")));
+    }
+  }
+  return out;
+}
+
+/** Every copy of `file` in the PMDG packages (Documentation\SDK first), newest first. */
+export function sdkHeadersInPackages(file: string, roots?: string[]): string[] {
+  const hits: string[] = [];
+  for (const p of pmdgPackageDirs(roots)) {
+    const likely = [join(p, "Documentation", "SDK", file), join(p, "Documentation", file), join(p, "SDK", file), join(p, file)].find((x) => existsSync(x));
+    const hit = likely ?? walk(p, file, 4);
+    if (hit) hits.push(hit);
+  }
+  const mtime = (f: string) => {
+    try {
+      return statSync(f).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  return hits.sort((a, b) => mtime(b) - mtime(a));
 }
 
 /** Looks for `file` below `dir`, at most `depth` folders down. */
@@ -77,21 +124,9 @@ export function findSdkHeader(file: string, extraDirs: string[] = []): FoundSdk 
     const hit = walk(d, file, 3);
     if (hit) return read(hit);
   }
-  for (const root of installedPackagesPaths()) {
-    if (!existsSync(root)) continue;
-    const packageDirs: string[] = [];
-    for (const sub of ["Community", "Official"]) {
-      const base = join(root, sub);
-      packageDirs.push(...subdirs(base));
-      // Official\<channel>\<package>
-      if (sub === "Official") for (const ch of subdirs(base)) packageDirs.push(...subdirs(ch));
-    }
-    for (const p of packageDirs) {
-      if (!/pmdg/i.test(p.split(/[\\/]/).pop() ?? "")) continue;
-      const likely = [join(p, "Documentation", "SDK", file), join(p, "Documentation", file), join(p, "SDK", file), join(p, file)].find((x) => existsSync(x));
-      const hit = likely ?? walk(p, file, 4);
-      if (hit) return read(hit);
-    }
+  for (const hit of sdkHeadersInPackages(file)) {
+    const got = read(hit);
+    if (got) return got;
   }
   return null;
 }

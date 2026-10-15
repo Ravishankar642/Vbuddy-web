@@ -3,6 +3,7 @@ import { ClientDataPeriod, ClientDataRequestFlag, EventFlag, SimConnectConstants
 import type { Logger } from "../log.js";
 import type { PanelBackend, PanelResult } from "../panel/backend.js";
 import { findSdkHeader, type FoundSdk } from "./find-sdk.js";
+import type { PmdgSetupReport } from "./sdk-setup.js";
 import { NOT_A_BUTTON, NOT_A_LIGHT_SWITCH, PROFILES, pickNames, type FlagSpec, type PmdgKind, type Profile } from "./profiles.js";
 import { parseHeader, readField, type Field, type Sdk } from "./sdk.js";
 
@@ -29,6 +30,11 @@ export interface PmdgOptions {
   load?: (file: string) => FoundSdk | null;
   /** Divides every wait (tests). */
   speed?: number;
+  /**
+   * Installs the SDK headers and turns on PMDG's broadcast in the options .ini (pmdg/sdk-setup.ts). Called on every
+   * aircraft change; `headers` asks for the header copy too (only when one couldn't be loaded).
+   */
+  setup?: (o: { headers: boolean }) => PmdgSetupReport;
 }
 
 interface Resolved {
@@ -119,6 +125,9 @@ export class PmdgPanel implements PanelBackend, CduSource {
   private cduSince = 0;
   private readonly speed: number;
   private readonly load: (file: string) => FoundSdk | null;
+  private readonly setup: PmdgOptions["setup"];
+  /** Aircraft whose options .ini VBuddy has just turned the broadcast on in: they need reloading. */
+  private enabledNow = new Set<PmdgKind>();
 
   constructor(
     private sim: SimLike,
@@ -128,6 +137,7 @@ export class PmdgPanel implements PanelBackend, CduSource {
   ) {
     this.speed = opts.speed ?? 1;
     this.load = opts.load ?? ((file) => findSdkHeader(file, opts.sdkDirs ?? []));
+    this.setup = opts.setup;
     base.onChange(() => this.changed());
     sim.onHandle((h) => this.attach(h));
     sim.onStatus((s) => {
@@ -227,11 +237,12 @@ export class PmdgPanel implements PanelBackend, CduSource {
     if (this.liveTimer) clearTimeout(this.liveTimer);
     this.liveTimer = null;
     const p = this.profileFor(title);
+    this.prepare(p);
     if (p) {
       const rt = this.runtime(p);
       // No SDK header: the panel still works the way Cobalt drives a PMDG (its published event numbers, see
       // panel/addons.ts), but the MCP windows and lights can't be read, so say where the file goes.
-      if (!rt) this.problem = `The ${p.label}'s MCP windows and lights need PMDG's ${p.headerFile}. Copy it from the aircraft's Documentation\\SDK folder into %APPDATA%\\VBuddy\\sdk and restart VBuddy.`;
+      if (!rt) this.problem = `The ${p.label}'s MCP windows and lights need PMDG's ${p.headerFile}, and VBuddy couldn't find it in the aircraft's package. Copy it from the aircraft's Documentation\\SDK folder into %APPDATA%\\VBuddy\\sdk and restart VBuddy.`;
       else if (!rt.live) {
         this.liveTimer = setTimeout(() => {
           if (!rt.live && this.title === title) {
@@ -239,7 +250,9 @@ export class PmdgPanel implements PanelBackend, CduSource {
             this.problem =
               got > 0
                 ? `Only ${got} of ${rt.chunks.length} blocks of ${p.label} data arrived: ${p.headerFile} (${rt.path}) probably doesn't match the installed aircraft version.`
-                : `The ${p.label} isn't sending its data. In the aircraft's work folder, open its options .ini file, set EnableDataBroadcast=1 and reload the aircraft.`;
+                : this.enabledNow.has(p.kind)
+                  ? `VBuddy has just turned on the ${p.label}'s data in its options .ini. Reload the aircraft (or restart the flight) to start it.`
+                  : `The ${p.label} isn't sending its data. In the aircraft's work folder, open its options .ini file, set EnableDataBroadcast=1 under [SDK] and reload the aircraft.`;
             this.log.warn(this.problem);
             this.changed();
           }
@@ -247,6 +260,26 @@ export class PmdgPanel implements PanelBackend, CduSource {
       }
     }
     this.changed();
+  }
+
+  /**
+   * Keeps the PMDG setup in place (pmdg/sdk-setup.ts): the options .ini lines every time the aircraft changes (PMDG
+   * recreates the file when the aircraft is updated), and the header when this aircraft's couldn't be loaded before.
+   */
+  private prepare(p: Profile | null | undefined) {
+    if (!this.setup) return;
+    const r = this.setup({ headers: !!p && this.runtimes.has(p.kind) && this.runtimes.get(p.kind) === null });
+    for (const h of r.headers) {
+      if (h.action === "current") continue;
+      this.log.info(`${h.action === "installed" ? "Installed" : "Updated"} ${h.file} from ${h.from}`);
+      if (this.runtimes.get(h.kind) === null) this.runtimes.delete(h.kind); // try loading it again
+    }
+    for (const i of r.inis) {
+      if (i.action === "current") continue;
+      this.log.info(`Turned on PMDG's data in ${i.path} (${i.added.join(", ")}). The aircraft picks it up when it's next loaded.`);
+      this.enabledNow.add(i.kind);
+    }
+    for (const e of r.errors) this.log.warn(`PMDG setup: ${e}`);
   }
 
   /** Loads the header and starts listening, once per PMDG aircraft type. */
@@ -655,7 +688,7 @@ export class PmdgPanel implements PanelBackend, CduSource {
     const s = Math.max(0, Math.min(sides - 1, side));
     const blank: CduScreen = { aircraft, side: s, sides, live: false, powered: false, rows: [], colors: [], flags: [], annun: { exec: false, msg: false, fail: false, ofst: false, call: false, dspy: false }, keys: [], message: null };
     const rt = this.runtimes.get(p.kind);
-    if (!rt) return { ...blank, message: `The CDU needs PMDG's ${p.headerFile}. Copy it from the aircraft's Documentation\\SDK folder into %APPDATA%\\VBuddy\\sdk and restart VBuddy.` };
+    if (!rt) return { ...blank, message: `The CDU needs PMDG's ${p.headerFile}, and VBuddy couldn't find it in the aircraft's package. Copy it from the aircraft's Documentation\\SDK folder into %APPDATA%\\VBuddy\\sdk and restart VBuddy.` };
     const keys = [...rt.sdk.events.keys()].filter((k) => k.startsWith("EVT_CDU_L_") && !/BRITENESS|BRIGHT/.test(k)).map((k) => k.slice("EVT_CDU_L_".length));
     const c = rt.cdus[s]!;
     const flag = (name: string) => {
@@ -667,6 +700,7 @@ export class PmdgPanel implements PanelBackend, CduSource {
       const waited = Date.now() - this.cduSince > CDU_WAIT_MS / this.speed;
       const ini = p.kind === "777x" ? "777_Options.ini" : "737_Options.ini";
       const lines = Array.from({ length: sides }, (_, i) => `EnableCDUBroadcast.${i}=1`).join(", ");
+      if (waited && this.enabledNow.has(p.kind)) return { ...blank, keys, annun, message: `VBuddy has just turned on the ${p.label}'s CDU screens in ${ini}. Reload the aircraft (or restart the flight) to see them.` };
       return { ...blank, keys, annun, message: waited ? `The ${p.label} isn't sending its CDU screens. In the aircraft's work folder, open ${ini} and add ${lines} under [SDK], then reload the aircraft.` : "Waiting for the CDU screen…" };
     }
     const rows: string[] = [];

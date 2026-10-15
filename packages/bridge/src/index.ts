@@ -39,6 +39,7 @@ import { FlightAlerts } from "./alerts/engine.js";
 import { EMPTY_EXTRAS, type SimExtras } from "./sim/source.js";
 import { PmdgPanel } from "./pmdg/pmdg-panel.js";
 import { MockCdu } from "./pmdg/mock-cdu.js";
+import { describeSetup, setupPmdgSdk } from "./pmdg/sdk-setup.js";
 import { PauseScheduler } from "./sim/pause-scheduler.js";
 import { PanelService } from "./panel/service.js";
 import { SimPanel } from "./panel/sim-panel.js";
@@ -278,7 +279,20 @@ async function main() {
   const simPanel = source instanceof SimConnectSource ? new SimPanel(source) : null;
   // The iniBuilds A340 / A350 / A380 get the same FCU screen as the Fenix, through their input events.
   if (fenixCockpit && simPanel) cockpit = new CombinedCockpit(fenixCockpit, simPanel);
-  const panelBackend = source instanceof SimConnectSource && simPanel ? new PmdgPanel(source, simPanel, logger("pmdg"), { sdkDirs: [join(process.cwd(), "sdk"), fileURLToPath(new URL("../../../sdk", import.meta.url)), ...(cfg.dataDir ? [join(cfg.dataDir, "sdk")] : [])] }) : new MockPanel(cfg.mockAircraft);
+  // The PMDG headers are copied from the aircraft into %APPDATA%\VBuddy\sdk (and refreshed when the aircraft is updated), and the
+  // aircraft's options .ini gets the [SDK] lines that turn its data on: at start, and again on every aircraft change.
+  let pmdgPanel: PmdgPanel | null = null;
+  if (source instanceof SimConnectSource && simPanel) {
+    const pLog = logger("pmdg");
+    const setup = (o: { headers: boolean }) => setupPmdgSdk({ dataDir: cfg.dataDir ?? undefined, headers: o.headers });
+    const first = setupPmdgSdk({ dataDir: cfg.dataDir ?? undefined });
+    for (const line of describeSetup(first)) pLog.info(line);
+    for (const e of first.errors) pLog.warn(`PMDG setup: ${e}`);
+    // The copy in the data folder comes first: it's kept the same as the installed aircraft's.
+    const sdkDirs = [...(cfg.dataDir ? [join(cfg.dataDir, "sdk")] : []), join(process.cwd(), "sdk"), fileURLToPath(new URL("../../../sdk", import.meta.url))];
+    pmdgPanel = new PmdgPanel(source, simPanel, pLog, { sdkDirs, setup });
+  }
+  const panelBackend = pmdgPanel ?? new MockPanel(cfg.mockAircraft);
   const panel = new PanelService(panelBackend, logger("panel"));
   const cdu = panelBackend instanceof PmdgPanel ? panelBackend : new MockCdu();
   const systems = source instanceof SimConnectSource ? new SimSystems(source, logger("systems")) : new MockSystems();

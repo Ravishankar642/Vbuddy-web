@@ -20,12 +20,9 @@ connects to any VBuddy server.
 4. Chat and VATSIM connect/disconnect from the app need the "VBuddy Link" plugin in vPilot
    (the installer offers it). Restart vPilot after installing it.
 
-PMDG 737 / 777: copy PMDG_NG3_SDK.h and/or PMDG_777X_SDK.h from the aircraft's
-Documentation\SDK folder into %APPDATA%\VBuddy\sdk, and in the aircraft's work folder add these
-under [SDK] in 737_Options.ini / 777_Options.ini, then reload the aircraft:
-    EnableDataBroadcast=1
-    EnableCDUBroadcast.0=1
-    EnableCDUBroadcast.1=1        (777: also EnableCDUBroadcast.2=1)
+PMDG 737 / 777: nothing to do. VBuddy copies the aircraft's SDK file into %APPDATA%\VBuddy\sdk
+and turns on PMDG's data in 737_Options.ini / 777_Options.ini by itself (with a backup). Fly the
+aircraft once, start VBuddy, then reload the aircraft if the app asks you to.
 
 Updates: VBuddy checks for new versions itself; install them from Settings > Updates in the
 VBuddy window. Your flights, landings, pairings and settings (%APPDATA%\VBuddy) are kept.

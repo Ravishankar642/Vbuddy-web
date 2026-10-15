@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { LightId, PanelState, SimStatus } from "@vbuddy/protocol";
 import { logger } from "../log.js";
 import type { PanelBackend } from "../panel/backend.js";
-import { PmdgPanel } from "./pmdg-panel.js";
+import { PmdgPanel, type PmdgOptions } from "./pmdg-panel.js";
 import { parseHeader, readField } from "./sdk.js";
 
 /** A made-up header in the same shape as PMDG's (not PMDG's file). */
@@ -95,6 +95,10 @@ interface Opts {
   navOn?: number[];
   /** The aircraft sends its CDU screens (EnableCDUBroadcast on). */
   cdu?: boolean;
+  /** The PMDG setup hook (pmdg/sdk-setup.ts). */
+  setup?: PmdgOptions["setup"];
+  /** The aircraft sends nothing at all (EnableDataBroadcast off). */
+  silent?: boolean;
 }
 
 function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
@@ -132,6 +136,7 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
       for (const r of requests) {
         const area = areaNames.get(r.cd) ?? "";
         if (/_CDU_/.test(area) && (!opts.cdu || !area.endsWith("_0"))) continue;
+        if (!/_CDU_/.test(area) && opts.silent) continue;
         const src = /_CDU_/.test(area) ? cdu : aircraft;
         h.emit("clientData", { requestID: r.id, data: { readBytes: (n: number) => src.subarray(r.off, r.off + n) } });
       }
@@ -222,7 +227,7 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
     onStatus: (cb: (s: SimStatus) => void) => (onStatus = cb),
     status: () => status,
   };
-  const panel = new PmdgPanel(sim as never, base as never, logger("test"), { load: () => (header === null ? null : { path: "test.h", text: header }), speed: 80 });
+  const panel = new PmdgPanel(sim as never, base as never, logger("test"), { load: () => (header === null ? null : { path: "test.h", text: header }), speed: 80, setup: opts.setup });
   onHandle(h);
   const load = async () => {
     status.aircraftTitle = title;
@@ -245,7 +250,11 @@ function rig(title: string, opts: Opts = {}, header: string | null = HEADER) {
     cdu[cdu.length - 1] = on ? 1 : 0;
     emitAll();
   };
-  return { panel, base, sent, get, poke, lights, load, sdk, flags, cduWrite, cduPower, areaNames };
+  const retitle = (t: string) => {
+    status.aircraftTitle = t;
+    onStatus({ ...status });
+  };
+  return { panel, base, sent, get, poke, lights, load, retitle, sdk, flags, cduWrite, cduPower, areaNames };
 }
 
 test("a PMDG 737 reports its autopilot from the aircraft's own data", async () => {
@@ -403,4 +412,41 @@ test("without the SDK file the standard panel (Cobalt's PMDG event numbers) take
   assert.match(st.note ?? "", /PMDG_NG3_SDK\.h.*%APPDATA%\\VBuddy\\sdk/);
   await r.panel.press("cmd");
   assert.deepEqual(r.base.stdCalls, ["press cmd"]);
+});
+
+test("on every aircraft change the PMDG setup runs, and a header it installs is loaded", async () => {
+  const calls: boolean[] = [];
+  let installed = false;
+  let hdr: string | null = null;
+  const r = rig("737-800 PAX BW SC", {
+    setup: (o) => {
+      calls.push(o.headers);
+      if (o.headers) {
+        installed = true;
+        hdr = HEADER;
+      }
+      return { headers: o.headers ? [{ kind: "ng3", file: "PMDG_NG3_SDK.h", from: "pkg", to: "data", action: "installed" }] : [], inis: [], errors: [] };
+    },
+  }, null);
+  // the rig's loader reads `header`; swap in one that follows what setup installed
+  (r.panel as unknown as { load: (f: string) => unknown }).load = () => (hdr ? { path: "data/PMDG_NG3_SDK.h", text: hdr } : null);
+  await r.load();
+  assert.deepEqual(calls, [false]); // first load: nothing tried yet, so no header search
+  assert.match(r.panel.state()?.note ?? "", /couldn't find it in the aircraft's package/);
+  r.retitle("A320neo");
+  await r.load();
+  assert.deepEqual(calls, [false, false, true]); // back on the 737 with no header loaded: install it
+  assert.equal(installed, true);
+  assert.equal(r.panel.state()?.note ?? null, null);
+});
+
+test("when the setup has just turned the data on, the app says to reload the aircraft", async () => {
+  const r = rig("737-800 PAX BW SC", {
+    silent: true,
+    setup: () => ({ headers: [], inis: [{ kind: "ng3", path: "work/737_Options.ini", action: "enabled", added: ["EnableDataBroadcast"] }], errors: [] }),
+  });
+  await r.load();
+  await new Promise((x) => setTimeout(x, 300));
+  assert.match(r.panel.state()?.note ?? "", /VBuddy has just turned on the PMDG 737's data.*Reload the aircraft/);
+  assert.match(r.panel.screen(0)?.message ?? "", /VBuddy has just turned on the PMDG 737's CDU screens in 737_Options\.ini/);
 });

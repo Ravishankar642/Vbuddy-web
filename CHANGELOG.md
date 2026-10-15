@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- **PMDG 737 and 777 set themselves up.** VBuddy finds the aircraft in your Community and Official folders (also when they're linked from another drive) and copies its SDK header into %APPDATA%\VBuddy\sdk, and copies it again when an aircraft update changes it. It also adds the [SDK] lines that turn on PMDG's data and CDU screens (EnableDataBroadcast, EnableCDUBroadcast.0/.1, and .2 on the 777) to the aircraft's 737_Options.ini / 777_Options.ini, with a backup the first time. This runs when VBuddy starts and on every aircraft change, because PMDG makes a fresh options file when the aircraft is reinstalled or updated. When VBuddy has just turned the data on, the app says to reload the aircraft.
+
 ## 1.1.0
 
 - **iniBuilds A340 / A350 / A380 get the Fenix-style FCU screen** under Controls (knobs, windows, push/pull, AP1/AP2, A/THR, LOC, APPR, SPD/MACH, HDG-V/S TRK-FPA, METRIC, FD), driven through the aircraft's input events. No EFIS column (its baro and ND aren't wired yet).
