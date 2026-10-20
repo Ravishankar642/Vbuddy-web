@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+- **Flights start when you've spawned, not in the menu.** VBuddy now knows the simulator's menu, hangar, loading screen and replays from flying (the camera state, the "Sim" event, MSFS's placeholder positions, and a position that doesn't move at speed). A flight starts once the aircraft has settled where it was put; a jump of more than 20 nm starts a new one. Replays no longer count as landings and no longer move the end of the flight, and a "flight" that never went anywhere is left out of the list.
+- **Older flight records are tidied once:** flights that began at the menu placeholder (0°N 90°E) or in the MSFS 2024 hangar get their real start where the telemetry is still there, replayed landings are set aside (not deleted), and menu stretches are hidden. Flights flown on their SimBrief plan now show up in the Atlas.
+- **The SimBrief plan is loaded when you connect to VATSIM**, and again when a flight starts and every couple of minutes until takeoff. It's tied to the flight only if it starts where the flight began, and the record keeps its callsign, route, planned distance and time (shown next to what you flew).
+- **The map trail starts once you've spawned and connected to VATSIM** (straight away when vPilot isn't linked to VBuddy), belongs to the flight in progress, and starts again for a new flight. Your SimBrief route is drawn as a dashed line.
+- **Weather on the map:** rain radar from RainViewer, and clouds from OpenWeatherMap with a free key pasted into the VBuddy window (the key stays on the PC; the PC fetches the tiles).
+- **Notifications have their own page** (the bell), with a main switch and new options: takeoff, top of climb, passing 10,000 ft, approaching the destination, at the gate, flight plan loaded, the simulator stopping mid-flight, and the simulator pausing itself. In the app they show as short notes.
+- **Notifications fixed on iPhone:** a push that arrived while the app was open wasn't shown, and Safari takes the permission away from a site after a few of those. Pushes are now always shown, and the bridge doesn't send them to a device that has the app on screen. A phone paired again is linked to its notifications by itself, devices that are no longer paired are dropped, and every notification sent is logged.
+- **Airline colours:** connect to VATSIM as QTR123 and the app turns Qatar burgundy, IGO… IndiGo blue and white, UAE… Emirates green, white and black, and so on for about 100 airlines, in light and dark mode. A nameplate on the Live page shows the airline, callsign, plan and distance to go. Put your own logos in %APPDATA%\VBuddy\logos (QTR.png). Switch it off under Settings → Appearance.
+- **Screenshots:** Systems → Sim view → *Take screenshot* grabs the sim window at full size, keeps it on the PC (%APPDATA%\VBuddy\screenshots) and saves it to your phone.
+- **Inbox is now Comms.**
+- **The Live page no longer greys out while data is coming in:** it compared the PC's clock with the phone's, so a phone a few seconds off made it look stale.
+
 ## 1.1.1
 
 - **PMDG 737 and 777 set themselves up.** VBuddy finds the aircraft in your Community and Official folders (also when they're linked from another drive) and copies its SDK header into %APPDATA%\VBuddy\sdk, and copies it again when an aircraft update changes it. It also adds the [SDK] lines that turn on PMDG's data and CDU screens (EnableDataBroadcast, EnableCDUBroadcast.0/.1, and .2 on the 777) to the aircraft's 737_Options.ini / 777_Options.ini, with a backup the first time. This runs when VBuddy starts and on every aircraft change, because PMDG makes a fresh options file when the aircraft is reinstalled or updated. When VBuddy has just turned the data on, the app says to reload the aircraft.

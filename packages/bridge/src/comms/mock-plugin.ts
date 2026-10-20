@@ -7,7 +7,7 @@ import type { CommsService, PluginLink } from "./service.js";
  */
 export class MockPlugin implements PluginLink {
   private timers: NodeJS.Timeout[] = [];
-  private callsign = "BAW123";
+  private callsign = process.env.VBUDDY_MOCK_CALLSIGN || "BAW123";
   private n = 0;
 
   constructor(private svc: CommsService) {}

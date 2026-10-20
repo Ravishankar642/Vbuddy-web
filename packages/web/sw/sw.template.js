@@ -74,9 +74,8 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(
     (async () => {
-      // If VBuddy is open and in front of you, the page already shows it.
-      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      if (d.kind !== "test" && wins.some((w) => w.visibilityState === "visible" && w.focused)) return;
+      // Always shown: iPhones withdraw the permission from a site whose pushes don't show a notification. The bridge
+      // already leaves out devices that have VBuddy on screen.
       await self.registration.showNotification(d.title || "VBuddy", {
         body: d.body || "",
         tag: d.tag || undefined,

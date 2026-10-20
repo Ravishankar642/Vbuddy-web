@@ -30,6 +30,13 @@ export interface SimExtras {
   stallWarning: number | null;
   /** 1 while the overspeed warning is sounding. */
   overspeedWarning: number | null;
+  /**
+   * The sim's CAMERA STATE: 2-10 are the flying views (cockpit, outside, drone…); 11-18 and 20-23 are the menu, world
+   * map, hangar, loading and replay. Null when unknown.
+   */
+  cameraState?: number | null;
+  /** From the sim's "Sim" event: 1 = a flight is running, 0 = the sim is in its menus. Null until the first event. */
+  simRunning?: number | null;
 }
 
 export const EMPTY_EXTRAS: SimExtras = {
@@ -44,6 +51,8 @@ export const EMPTY_EXTRAS: SimExtras = {
   eng4: null,
   stallWarning: null,
   overspeedWarning: null,
+  cameraState: null,
+  simRunning: null,
 };
 
 /**

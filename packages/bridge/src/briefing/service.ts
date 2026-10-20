@@ -40,6 +40,19 @@ export class BriefingService {
     return this.cachedEndpoints();
   }
 
+  /**
+   * The SimBrief plan itself, without weather: loaded again when it's older than a minute, or always with `refresh`.
+   * Null when there is no SimBrief name, no plan, or SimBrief can't be reached (an older good plan is kept then).
+   */
+  async plan(refresh = false): Promise<NonNullable<ReturnType<typeof mapOfp>> | null> {
+    const id = this.simbriefId();
+    if (!id) return null;
+    const now = this.now();
+    if (refresh || !this.ofp || this.ofp.id !== id || now - this.ofp.at > OFP_TTL) await this.loadOfp(id, now);
+    const v = this.ofp?.value;
+    return v && typeof v === "object" ? v : null;
+  }
+
   /** The route fixes of the SimBrief plan, without fetching any weather. Empty when there is no plan. */
   async routeFixes(): Promise<Briefing["fixes"]> {
     const id = this.simbriefId();

@@ -39,6 +39,18 @@ export async function subscribeBrowser(publicKey: string): Promise<{ ok: true; s
   }
 }
 
+/** This browser's subscription, if it has one for this bridge's key and notifications are allowed. Asks nothing. */
+export async function existingSubscription(publicKey: string): Promise<PushSubscriptionJSON | null> {
+  try {
+    if (pushSupport() !== "ok" || Notification.permission !== "granted") return null;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return sub && sameKey(sub, publicKey) ? sub.toJSON() : null;
+  } catch {
+    return null;
+  }
+}
+
 function sameKey(sub: PushSubscription, publicKey: string): boolean {
   const k = sub.options?.applicationServerKey;
   if (!k) return true;

@@ -148,3 +148,21 @@ export const IconClose = () => (
     <path d="M6 6l12 12M18 6L6 18" />
   </Svg>
 );
+export const IconBell = () => (
+  <Svg>
+    <path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z" />
+    <path d="M10 20.5a2 2 0 0 0 4 0" />
+  </Svg>
+);
+export const IconRain = () => (
+  <Svg>
+    <path d="M7 15a4 4 0 0 1-.5-7.97A5.5 5.5 0 0 1 17 7.5a3.75 3.75 0 0 1 .25 7.5z" />
+    <path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5" />
+  </Svg>
+);
+export const IconCamera = () => (
+  <Svg>
+    <path d="M4 8h3l1.5-2.5h7L17 8h3v11H4z" />
+    <circle cx="12" cy="13.5" r="3.5" />
+  </Svg>
+);

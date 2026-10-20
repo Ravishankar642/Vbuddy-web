@@ -68,5 +68,21 @@ export const SimStatusSchema = z.object({
   simName: z.string().optional(),
   /** Human-readable reason when not connected. */
   detail: z.string().optional(),
+  /**
+   * The aircraft is spawned and flying (or parked at its spawn point), not in the menu, loading, or watching a
+   * replay. Only then are flights recorded, landings counted and the map trail drawn. Absent from older bridges.
+   */
+  inFlight: z.boolean().optional(),
+  /** The flight being recorded, while there is one. */
+  flight: z
+    .object({
+      /** Row in the bridge's flight log (null while it couldn't be written). */
+      id: z.number().int().nullable(),
+      startedAt: z.number(),
+      /** The map trail is drawn from this time on: spawned and, when vPilot is linked, connected to VATSIM. Null = not yet. */
+      trackSince: z.number().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type SimStatus = z.infer<typeof SimStatusSchema>;

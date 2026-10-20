@@ -12,7 +12,7 @@ interface Info {
   pairing: { code: string; expiresAt: number } | null;
   devices: Array<{ id: string; name: string; pairedAt: number; lastSeen: number | null }>;
   relay: { available: boolean; enabled: boolean; state: "off" | "connecting" | "connected"; url: string; shared: boolean; id: string; phoneLink: string; access: "paired" | "open"; error: string };
-  accounts: { simbrief: string; hoppieSet: boolean };
+  accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean };
   dataDir: string | null;
   host: { autostart: boolean | null; plugin: { available: boolean; dir: string | null; installed: boolean; upToDate: boolean } | null; canReconnect: boolean };
   update: { current: string; status: { kind: string }; text: string; version: string | null; notes: string | null; url: string | null };
@@ -154,6 +154,7 @@ function render(i: Info) {
   const sb = $<HTMLInputElement>("simbrief");
   if (document.activeElement !== sb && !accountsDirty) sb.value = i.accounts.simbrief;
   setText($("hoppieState"), i.accounts.hoppieSet ? "A code is saved." : "No code saved.");
+  setText($("owmState"), i.accounts.owmSet ? "A key is saved." : "No key saved.");
   $<HTMLButtonElement>("clearHoppie").hidden = !i.accounts.hoppieSet;
   setText($("dataDir"), i.dataDir ? `Settings and logs: ${i.dataDir}` : "");
   renderSettings(i);
@@ -234,15 +235,18 @@ function accountsSay(text: string, state: "ok" | "bad" | "muted") {
   s.className = `status ${state}`;
   s.textContent = text;
 }
-for (const id of ["simbrief", "hoppie"]) $<HTMLInputElement>(id).addEventListener("input", () => (accountsDirty = true));
+for (const id of ["simbrief", "hoppie", "owm"]) $<HTMLInputElement>(id).addEventListener("input", () => (accountsDirty = true));
 $<HTMLButtonElement>("saveAccounts").onclick = async () => {
-  const body: { simbrief: string; hoppie?: string } = { simbrief: $<HTMLInputElement>("simbrief").value };
+  const body: { simbrief: string; hoppie?: string; owm?: string } = { simbrief: $<HTMLInputElement>("simbrief").value };
   const h = $<HTMLInputElement>("hoppie").value;
   if (h.trim() !== "") body.hoppie = h;
+  const o = $<HTMLInputElement>("owm").value;
+  if (o.trim() !== "") body.owm = o;
   const ok = await act("integrations", body);
   if (ok) {
     accountsDirty = false;
     $<HTMLInputElement>("hoppie").value = "";
+    $<HTMLInputElement>("owm").value = "";
     accountsSay("Saved.", "ok");
   } else accountsSay(lastNote || "Couldn't save.", "bad");
 };

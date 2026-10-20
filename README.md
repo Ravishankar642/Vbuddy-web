@@ -2,15 +2,15 @@
 
 A free companion for Microsoft Flight Simulator. VBuddy runs on your sim PC and puts your flight on your phone, tablet or any browser: a live map with VATSIM traffic, your aircraft's systems, cockpit controls, a landing analyzer, radios and chat, and a remote view of the sim. Nothing to install on the phone.
 
-Version 1.1.1 · Windows · MSFS 2024 (and 2020) · [What's new](CHANGELOG.md)
+Version 1.2.0 · Windows · MSFS 2024 (and 2020) · [What's new](CHANGELOG.md)
 
 ---
 
 ## Get started
 
 1. **Download** the installer from the [Releases page](https://github.com/Ravishankar642/Vbuddy-web/releases):
-   - `VBuddy-Setup-1.1.1.exe`: works at home **and** away from home (optional cloud relay).
-   - `VBuddy-Local-Setup-1.1.1.exe`: home network only. It never connects to any VBuddy server.
+   - `VBuddy-Setup-1.2.0.exe`: works at home **and** away from home (optional cloud relay).
+   - `VBuddy-Local-Setup-1.2.0.exe`: home network only. It never connects to any VBuddy server.
 
    Both include everything they need; you don't need Node.js or anything else. To share VBuddy with a friend, just send them the installer.
 2. **Run the installer.** It opens VBuddy's port (TCP 4789) in Windows Firewall for you. Leave these ticked if you want them:
@@ -44,13 +44,19 @@ Prefer to stay on your own network? Use the Local edition, or a private VPN such
 
 | Tab | What you get |
 |---|---|
-| **Flights** | Live instruments, your saved flights, and nearby VATSIM traffic and ATC |
+| **Flights** | Live instruments with your airline and SimBrief plan, your saved flights, and nearby VATSIM traffic and ATC |
 | **Systems** | Engines, autopilot, fuel, electrical, cabin and weather; **Controls** (FCU/MCP, lights, simulator buttons); **Sim view**; **CDU** (PMDG); **Fenix EFB** (Fenix) |
-| **Inbox** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC) |
+| **Comms** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC) |
 | **Atlas** | Your flight record and every landing |
 | Search | Airport weather and your SimBrief flight plan |
 
-The map shows your aircraft with VATSIM traffic, ATC sectors and airports, and warns you before you cross into a new controller's airspace.
+The map shows your aircraft with VATSIM traffic, ATC sectors and airports, and warns you before you cross into a new controller's airspace. Your SimBrief route is drawn as a dashed line, and your own trail starts once you've spawned at the airport and connected to VATSIM. The **rain** button adds a weather radar (RainViewer); tap it again for **clouds** too, which needs a free [OpenWeatherMap](https://openweathermap.org/api) key pasted into the VBuddy window under *Your accounts*.
+
+### Your flight and SimBrief
+When you connect to VATSIM, VBuddy loads your latest SimBrief plan by itself (your SimBrief name goes in the VBuddy window). If the plan starts at the airport where you spawned, it's tied to the flight: the route goes on the map, the Live page shows the flight number and distance to go, and the flight record keeps the plan, planned against flown. A flight only starts once the aircraft has settled at its spawn point, so time in the menu, the hangar, loading or watching a replay isn't recorded and replays don't count as landings.
+
+### Airline colours
+Connect to VATSIM with an airline callsign (QTR123, IGO6E45, UAE202…) and the app takes on that airline's colours, in light and dark mode, with a nameplate on the Live page. About 100 airlines are known; switch it off under Settings → Appearance. To show a logo, put an image named after the airline's ICAO code (`QTR.png`, `IGO.svg`…) in `%APPDATA%\VBuddy\logos`; otherwise the nameplate shows the airline's code in its colour.
 
 ### Landing analyzer
 Every touchdown is recorded from the sim's own data: rate (fpm), G, pitch, bank, wind, bounces and your flare (sink rate at 50, 30 and 10 ft), with a chart and a rating. Landings are kept on the PC, so you never miss one.
@@ -59,10 +65,10 @@ Every touchdown is recorded from the sim's own data: rate (fpm), G, pitch, bank,
 Under **Systems → Controls**, for every aircraft: lights, and a **Simulator and systems** card (pause, gear, spoilers, parking brake, engines, APU, flaps, altimeter, time rate, camera, and *Pause later* before the top of descent). The autopilot panel depends on the aircraft (below). Every command is checked against what the sim reports, so if an aircraft ignores something, the app tells you.
 
 ### Sim view
-**Systems → Sim view** shows the simulator window on your phone, about three pictures a second. If you use **ChasePlane**, your saved camera views are listed there and switch with one tap; without it, there are Cockpit and Outside buttons.
+**Systems → Sim view** shows the simulator window on your phone, about three pictures a second. If you use **ChasePlane**, your saved camera views are listed there and switch with one tap; without it, there are Cockpit and Outside buttons. **Take screenshot** grabs the sim window at full size; it's kept on the PC (`%APPDATA%\VBuddy\screenshots`) and *Save to phone* puts it in your photos.
 
 ### Notifications
-On a paired, installed device (through the cloud relay): ATC boundary ahead, touchdown result, top of descent, autopilot off in the cruise, and aircraft alerts such as an engine stopping. Choose them in the app's settings (round button at the top right).
+The **bell** at the top of the sheet opens Notifications: one switch for the device, then what to be told about: takeoff, top of climb, passing 10,000 ft, top of descent, approaching the destination, touchdown, at the gate; ATC changes and boundaries, messages, VATSIM connect, flight plan loaded; aircraft alerts, low fuel, autopilot off, the simulator stopping or pausing. They need a paired device on the relay's https address; on iPhone, add VBuddy to the Home Screen and open it from there. While VBuddy is on screen you see them in the app instead.
 
 ---
 
@@ -121,7 +127,7 @@ Your flights, landings, paired devices and settings live in `%APPDATA%\VBuddy` a
 ---
 
 ## Good to know
-- Talking on frequency from the phone isn't available; the Inbox can open VATSIM Listen (receive only).
+- Talking on frequency from the phone isn't available; Comms can open VATSIM Listen (receive only).
 - IVAO traffic isn't included yet.
 - VBuddy is free and has no accounts. Whoever runs the cloud relay can see the flight data that passes through it while you have it switched on.
 

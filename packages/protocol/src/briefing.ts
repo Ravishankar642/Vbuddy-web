@@ -28,6 +28,9 @@ export interface AirportBrief {
   role: "origin" | "destination" | "alternate" | "other";
   icao: string;
   name: string | null;
+  /** Position of the airport as SimBrief gives it; null when missing. */
+  lat?: number | null;
+  lon?: number | null;
   elevationFt: number | null;
   plannedRunway: string | null;
   metar: DecodedMetar | null;
@@ -56,6 +59,8 @@ export interface OfpSummary {
   pax: number | null;
   /** Fuel and weights are in this unit as SimBrief printed them (kg or lbs); the numbers above are converted to kg. */
   units: "kg" | "lbs";
+  /** SimBrief's id for this plan (changes with every new plan). */
+  ofpId?: string | null;
 }
 
 export interface RouteFix {

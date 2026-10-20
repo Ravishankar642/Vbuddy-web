@@ -1,5 +1,5 @@
 import type { CduSource } from "./pmdg/pmdg-panel.js";
-import { envelope, type FlightAlert, parseClientMessage, PLUGIN_PATH, PluginToBridgeSchema, WS_PATH, type ServerMessageBody } from "@vbuddy/protocol";
+import { envelope, type FlightAlert, type FlightEvent, type FlightPlanInfo, parseClientMessage, PLUGIN_PATH, PluginToBridgeSchema, WS_PATH, type ServerMessageBody } from "@vbuddy/protocol";
 import type { BriefingService } from "./briefing/service.js";
 import type { HoppieService } from "./acars/hoppie.js";
 import { readFile } from "node:fs/promises";
@@ -23,6 +23,8 @@ import type { LogEntry } from "./log.js";
 import type { LegBook } from "./db/legs.js";
 import type { EfbProxy } from "./efb/proxy.js";
 import type { FrameSource } from "./simview/capture.js";
+import type { Screenshots } from "./simview/screenshots.js";
+import { existsSync as fileExists, readFileSync as readFileNow } from "node:fs";
 import { SimViewFeed } from "./simview/feed.js";
 import type { ChasePlaneLink } from "./chaseplane/client.js";
 import type { PushService } from "./push/service.js";
@@ -59,6 +61,20 @@ interface Client {
   cdu?: number;
   /** The last CDU screen sent to it (JSON), so unchanged screens aren't sent again. */
   cduSent?: string;
+  /** The app is on this client's screen (from its "visibility" messages; not assumed: an older app never says). */
+  visible?: boolean;
+}
+
+/** Extra services the server shows to the app. */
+export interface ServerExtras {
+  flightEvents?: { onEvent(cb: (e: FlightEvent) => void): void } | null;
+  plan?: { current(): FlightPlanInfo | null; onChange(cb: (p: FlightPlanInfo | null) => void): void } | null;
+  screenshots?: Screenshots | null;
+  /** A cloud/rain map tile from OpenWeatherMap through this PC (the key stays here). Null = no key. */
+  weatherTile?: ((layer: string, z: number, x: number, y: number) => Promise<Buffer | null>) | null;
+  weatherInfo?: (() => { clouds: boolean }) | null;
+  /** Airline logos the pilot put in VBuddy's data folder (logos\QTR.png). */
+  logosDir?: string | null;
 }
 
 const NETWORK_OFF = { network: "off", state: "off", updatedAt: null, boundaries: false } as const;
@@ -87,7 +103,7 @@ export interface RelayServerOptions {
   id?: string;
 }
 
-export function startServer(opts: { console?: ConsoleHooks | null; briefing?: BriefingService | null; acars?: HoppieService | null; flightAlerts?: { onAlert(cb: (a: FlightAlert) => void): void } | null; panel?: PanelService | null; cdu?: CduSource | null; systems?: SystemsSource | null; legs?: LegBook | null; atlas?: AtlasService | null; efb?: EfbProxy | null; efbPort?: number; simView?: FrameSource | null; chasePlane?: ChasePlaneLink | null; comms?: CommsService | null; relay?: RelayServerOptions | null; push?: PushService | null; hub: TelemetryHub; landings: LandingStore; history?: FlightHistory | null; network?: NetworkHub | null; cockpit?: CockpitHub | null; pairing?: Pairing | null; host: string; port: number; webDir: string | null }): Promise<BridgeServer> {
+export function startServer(opts: { console?: ConsoleHooks | null; briefing?: BriefingService | null; acars?: HoppieService | null; flightAlerts?: { onAlert(cb: (a: FlightAlert) => void): void } | null; panel?: PanelService | null; cdu?: CduSource | null; systems?: SystemsSource | null; legs?: LegBook | null; atlas?: AtlasService | null; efb?: EfbProxy | null; efbPort?: number; simView?: FrameSource | null; chasePlane?: ChasePlaneLink | null; comms?: CommsService | null; relay?: RelayServerOptions | null; push?: PushService | null; hub: TelemetryHub; landings: LandingStore; history?: FlightHistory | null; network?: NetworkHub | null; cockpit?: CockpitHub | null; pairing?: Pairing | null; host: string; port: number; webDir: string | null } & ServerExtras): Promise<BridgeServer> {
   const { hub, landings } = opts;
   const history = opts.history ?? null;
   const legs = opts.legs ?? null;
@@ -229,6 +245,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       }
     }
     send(ws, { t: "landingList", landings: landings.list() });
+    if (opts.plan) send(ws, { t: "flightPlan", plan: opts.plan.current() });
     send(ws, atcListBody());
     if (network) {
       send(ws, { t: "atcPosition", position: network.position() });
@@ -340,6 +357,38 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       const ids = (new URL(url, "http://x").searchParams.get("ids") ?? "").split(",").filter(Boolean).slice(0, 300);
       res.writeHead(network ? 200 : 404, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(network ? network.boundaries(ids) : { error: "network data is off" }));
+      return;
+    }
+    const shotM = /^\/api\/screenshots\/([A-Za-z0-9._-]+)$/.exec(url);
+    if (shotM) {
+      const buf = opts.screenshots?.read(shotM[1]!) ?? null;
+      if (!buf) return json(res, 404, { error: "no such screenshot" });
+      res.writeHead(200, { "content-type": "image/jpeg", "content-length": String(buf.length), "cache-control": "private, max-age=86400", "content-disposition": `inline; filename="${shotM[1]}"` });
+      res.end(buf);
+      return;
+    }
+    if (url === "/api/weather/info") return json(res, 200, opts.weatherInfo?.() ?? { clouds: false });
+    const wxM = /^\/api\/weather\/(clouds|precipitation)\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.png$/.exec(url);
+    if (wxM) {
+      const tile = opts.weatherTile ? await opts.weatherTile(wxM[1]!, Number(wxM[2]), Number(wxM[3]), Number(wxM[4])).catch(() => null) : null;
+      if (!tile) return json(res, 404, { error: "no weather tile" });
+      res.writeHead(200, { "content-type": "image/png", "content-length": String(tile.length), "cache-control": "public, max-age=600" });
+      res.end(tile);
+      return;
+    }
+    const logoM = /^\/api\/airline-logo\/([A-Z0-9]{2,3})$/.exec(url);
+    if (logoM) {
+      const dir = opts.logosDir;
+      const types: Array<[string, string]> = [["svg", "image/svg+xml"], ["png", "image/png"], ["webp", "image/webp"], ["jpg", "image/jpeg"]];
+      const hit = dir ? types.map(([ext, type]) => ({ f: join(dir, `${logoM[1]}.${ext}`), type })).find((x) => fileExists(x.f)) : undefined;
+      if (!hit) {
+        res.writeHead(404, { "cache-control": "public, max-age=300" });
+        res.end();
+        return;
+      }
+      const buf = readFileNow(hit.f);
+      res.writeHead(200, { "content-type": hit.type, "content-length": String(buf.length), "cache-control": "public, max-age=3600", ...(hit.type === "image/svg+xml" ? { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" } : {}) });
+      res.end(buf);
       return;
     }
     if (url === "/api/flights" || url.startsWith("/api/flights/") || url.startsWith("/api/flights?") || url === "/api/atlas") {
@@ -632,6 +681,18 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
             send(ws, { t: "simViewStatus", state: st.state, ...(st.message ? { message: st.message } : {}) });
           }
         }
+      } else if (msg.t === "visibility") {
+        client.visible = msg.visible;
+      } else if (msg.t === "screenshot") {
+        const id = msg.id;
+        const shots = opts.screenshots;
+        if (!shots || !shots.available()) send(ws, { t: "screenshotResult", id, ok: false, error: "Screenshots aren't available on this bridge." });
+        else if (!trusted(client)) send(ws, { t: "screenshotResult", id, ok: false, error: "Pair this device first (Systems → Controls) to take screenshots." });
+        else
+          void shots.take().then(
+            (r) => send(ws, r.ok ? { t: "screenshotResult", id, ok: true, name: r.name, w: r.w, h: r.h, bytes: r.bytes } : { t: "screenshotResult", id, ok: false, error: r.error }),
+            (e: Error) => send(ws, { t: "screenshotResult", id, ok: false, error: e.message }),
+          );
       } else if (msg.t === "panelCmd") {
         const id = msg.id;
         if (!panel) {
@@ -712,6 +773,14 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
   opts.flightAlerts?.onAlert((alert) => {
     for (const c of clients) send(c.ws, { t: "flightAlert", alert });
   });
+  opts.flightEvents?.onEvent((event) => {
+    for (const c of clients) send(c.ws, { t: "flightEvent", event });
+  });
+  opts.plan?.onChange((plan) => {
+    for (const c of clients) send(c.ws, { t: "flightPlan", plan });
+  });
+  // Notifications aren't pushed to a device that has the app on its screen.
+  push?.setWatching((id) => [...clients].some((c) => c.device?.id === id && c.visible === true && c.ws.readyState === WebSocket.OPEN));
   comms?.onState(() => {
     for (const c of clients) send(c.ws, { t: "commsState", state: comms.state() });
   });

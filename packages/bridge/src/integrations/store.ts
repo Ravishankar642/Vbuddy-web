@@ -7,9 +7,19 @@ export interface Integrations {
   simbrief: string;
   /** Hoppie ACARS logon code. */
   hoppie: string;
+  /** OpenWeatherMap API key, for the cloud and rain layers on the map. */
+  owm: string;
 }
 
-const EMPTY: Integrations = { simbrief: "", hoppie: "" };
+const EMPTY: Integrations = { simbrief: "", hoppie: "", owm: "" };
+
+/** An OpenWeatherMap key is 32 hex characters. */
+export function cleanOwm(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s === "") return "";
+  return /^[A-Za-z0-9]{16,64}$/.test(s) ? s : null;
+}
 
 /** A SimBrief user name is letters, digits and a few separators; a pilot id is digits. */
 export function cleanSimbrief(v: unknown): string | null {
@@ -33,7 +43,7 @@ export class IntegrationStore {
     if (!file) return;
     try {
       const j = JSON.parse(readFileSync(file, "utf8")) as Partial<Integrations>;
-      this.value = { simbrief: cleanSimbrief(j.simbrief) ?? "", hoppie: cleanHoppie(j.hoppie) ?? "" };
+      this.value = { simbrief: cleanSimbrief(j.simbrief) ?? "", hoppie: cleanHoppie(j.hoppie) ?? "", owm: cleanOwm(j.owm) ?? "" };
     } catch {
       /* first run, or unreadable: start empty */
     }
@@ -44,7 +54,7 @@ export class IntegrationStore {
   }
 
   /** Only the fields present are changed. Returns an error message for a value that can't be right. */
-  set(patch: { simbrief?: unknown; hoppie?: unknown }): string | null {
+  set(patch: { simbrief?: unknown; hoppie?: unknown; owm?: unknown }): string | null {
     const next = { ...this.value };
     if (patch.simbrief !== undefined) {
       const s = cleanSimbrief(patch.simbrief);
@@ -55,6 +65,11 @@ export class IntegrationStore {
       const h = cleanHoppie(patch.hoppie);
       if (h === null) return "The Hoppie logon code is letters and digits only (6 or more).";
       next.hoppie = h;
+    }
+    if (patch.owm !== undefined) {
+      const o = cleanOwm(patch.owm);
+      if (o === null) return "The OpenWeatherMap key is letters and digits only.";
+      next.owm = o;
     }
     this.value = next;
     this.save();

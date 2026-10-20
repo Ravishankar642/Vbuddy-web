@@ -32,6 +32,8 @@ const EXTRAS = [
   { def: 11, req: 11, name: "GENERAL ENG COMBUSTION:4", units: "bool", key: "eng4", slow: true },
   { def: 12, req: 12, name: "STALL WARNING", units: "bool", key: "stallWarning", slow: true },
   { def: 13, req: 13, name: "OVERSPEED WARNING", units: "bool", key: "overspeedWarning", slow: true },
+  // Menu, loading and replay versus flying: VBuddy only records and counts landings while flying.
+  { def: 14, req: 14, name: "CAMERA STATE", units: "number", key: "cameraState", slow: true },
 ] as const;
 const EVT_PAUSE = 1;
 const EVT_SIM = 2;
@@ -282,6 +284,11 @@ export class SimConnectSource implements SimSource {
     });
     handle.on("event", (e) => {
       if (e.clientEventId === EVT_PAUSE) this.setStatus({ paused: e.data !== 0 });
+      else if (e.clientEventId === EVT_SIM) {
+        this.extras = { ...this.extras, simRunning: e.data !== 0 ? 1 : 0 };
+        const now = Date.now();
+        for (const cb of this.extrasCbs) cb(this.extras, now);
+      }
     });
     handle.on("exception", (ex) => {
       const extra = this.extrasSendIds.get(ex.sendId);

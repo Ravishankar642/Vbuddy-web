@@ -313,7 +313,7 @@ The app is a full-screen map with a bottom sheet (on a tablet or PC: a side pane
 |---|---|
 | **Flights** | Live (your instruments), My flights (your saved flights), Traffic (your ATC and nearby network traffic) |
 | **Systems** | Overview, Engines, Autopilot, Fuel, Electrical, Cabin and weather, and **Controls** (the knobs, lights and simulator buttons that used to be the Cockpit tab) |
-| **Inbox** | Radios, messages and ACARS (was Comms) |
+| **Comms** | Radios, messages and ACARS |
 | **Atlas** | Flight record and every landing (was Landings) |
 | Search button | Airport weather and your SimBrief plan (was Brief) |
 | Round button at the top right | Settings: appearance, notifications, install, connection details |

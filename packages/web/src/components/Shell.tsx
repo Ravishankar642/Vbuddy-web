@@ -3,17 +3,30 @@ import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
 import { MAP_STYLES, useMapStyle } from "../lib/mapstyle";
 import { Grab, useAppHeight, useSheet, WIDE_PANEL_PX } from "./Sheet";
-import { IconAtlas, IconBroadcast, IconChip, IconClose, IconFlight, IconGlobe, IconInbox, IconLayers, IconLocate, IconRefresh, IconSearch } from "./icons";
+import { IconAtlas, IconBell, IconBroadcast, IconChip, IconClose, IconFlight, IconGlobe, IconInbox, IconLayers, IconLocate, IconRain, IconRefresh, IconSearch } from "./icons";
+import type { WeatherMode } from "./MapView";
+import { apiFetch } from "../lib/api";
 
 const MapView = lazy(() => import("./MapView"));
 
-export type Tab = "flights" | "systems" | "inbox" | "atlas" | "search" | "me";
-const TABS: Array<[Exclude<Tab, "search" | "me">, string, () => ReturnType<typeof IconFlight>]> = [
+export type Tab = "flights" | "systems" | "comms" | "atlas" | "search" | "me" | "alerts";
+const TABS: Array<[Exclude<Tab, "search" | "me" | "alerts">, string, () => ReturnType<typeof IconFlight>]> = [
   ["flights", "Flights", IconFlight],
   ["systems", "Systems", IconChip],
-  ["inbox", "Inbox", IconInbox],
+  ["comms", "Comms", IconInbox],
   ["atlas", "Atlas", IconAtlas],
 ];
+
+const WEATHER_KEY = "vbuddy.map.weather";
+const WEATHER_LABEL: Record<WeatherMode, string> = { off: "Weather off", rain: "Rain radar", clouds: "Rain and clouds" };
+function readWeather(): WeatherMode {
+  try {
+    const v = localStorage.getItem(WEATHER_KEY);
+    return v === "rain" || v === "clouds" ? v : "off";
+  } catch {
+    return "off";
+  }
+}
 
 const isLocalHost = (h: string) => /^(localhost|127\.|\[::1\]|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || h.endsWith(".local");
 
@@ -47,6 +60,26 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
   const [follow, setFollow] = useState(true);
   const [traffic, setTraffic] = useState(true);
   const [sectors, setSectors] = useState(true);
+  const [weather, setWeatherState] = useState<WeatherMode>(readWeather);
+  // Clouds need an OpenWeatherMap key in the VBuddy window on the PC; the rain radar doesn't.
+  const [cloudsOk, setCloudsOk] = useState(false);
+  useEffect(() => {
+    if (b.link !== "open") return;
+    void apiFetch("/api/weather/info")
+      .then((r) => (r.ok ? (r.json() as Promise<{ clouds?: boolean }>) : null))
+      .then((j) => setCloudsOk(!!j?.clouds))
+      .catch(() => {});
+  }, [b.link]);
+  const cycleWeather = () => {
+    const next: WeatherMode = weather === "off" ? "rain" : weather === "rain" && cloudsOk ? "clouds" : "off";
+    setWeatherState(next);
+    try {
+      localStorage.setItem(WEATHER_KEY, next);
+    } catch {
+      /* remembered for this visit only */
+    }
+  };
+  const shownWeather: WeatherMode = weather === "clouds" && !cloudsOk ? "rain" : weather;
   const st = bridgeStatus(b);
   const locked = !!b.control?.locked;
   const inset = sheet.wide ? { bottom: 0, left: WIDE_PANEL_PX } : { bottom: sheet.height, left: 0 };
@@ -69,7 +102,7 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
     <div className="ms" ref={rootRef} style={{ ["--sheet-h" as string]: `${sheet.wide ? 0 : sheet.height}px`, ...(appHeight ? { height: appHeight } : {}) }}>
       <div className="ms__map">
         <Suspense fallback={null}>
-          <MapView b={b} follow={follow} onFollow={setFollow} showTraffic={traffic} showSectors={sectors} inset={inset} mapStyle={mapStyle} />
+          <MapView b={b} follow={follow} onFollow={setFollow} showTraffic={traffic} showSectors={sectors} inset={inset} mapStyle={mapStyle} weather={shownWeather} />
         </Suspense>
       </div>
 
@@ -94,6 +127,17 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
           <button type="button" className={`ms__fab${sectors ? " is-on" : ""}`} aria-pressed={sectors} onClick={() => setSectors(!sectors)} title="ATC sectors and airports">
             <IconLayers />
           </button>
+          <button
+            type="button"
+            className={`ms__fab${shownWeather !== "off" ? " is-on" : ""}`}
+            aria-pressed={shownWeather !== "off"}
+            onClick={cycleWeather}
+            title={`${WEATHER_LABEL[shownWeather]}. Tap to change.${cloudsOk ? "" : " Clouds need an OpenWeatherMap key in the VBuddy window."}`}
+            aria-label={`${WEATHER_LABEL[shownWeather]}. Tap to change.`}
+          >
+            <IconRain />
+            {shownWeather === "clouds" && <i className="ms__fabDot" aria-hidden />}
+          </button>
           <button type="button" className={`ms__fab${follow ? " is-on" : ""}`} aria-pressed={follow} onClick={() => setFollow(!follow)} title={follow ? "Following your aircraft" : "Follow your aircraft"}>
             <IconLocate on={follow} />
           </button>
@@ -107,10 +151,16 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
           <header className="ms__head">
             <div className="ms__headL">{left}</div>
             <h1>{title}</h1>
-            <button type="button" className="ms__avatar" onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings and notifications"}>
+            <div className="ms__headR">
+            <button type="button" className={`ms__bell${tab === "alerts" ? " is-on" : ""}`} onClick={() => setTab(tab === "alerts" ? "flights" : "alerts")} aria-label={tab === "alerts" ? "Close notifications" : "Notifications"} title="Notifications">
+              {tab === "alerts" ? <IconClose /> : <IconBell />}
+              {b.push && !b.push.subscribed && b.control?.reason === "paired" && tab !== "alerts" && <i />}
+            </button>
+            <button type="button" className="ms__avatar" onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings"}>
               {tab === "me" ? <IconClose /> : "V"}
               {!locked && b.link === "open" && tab !== "me" && <i />}
             </button>
+            </div>
           </header>
         </Grab>
         <div className="ms__body">{children}</div>
@@ -120,7 +170,7 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
               <button key={k} type="button" aria-current={tab === k ? "page" : undefined} onClick={() => pick(k)}>
                 <Icon />
                 <span>{label}</span>
-                {k === "inbox" && b.attentionUnread > 0 && <b className="ms__badge">{b.attentionUnread > 9 ? "9+" : b.attentionUnread}</b>}
+                {k === "comms" && b.attentionUnread > 0 && <b className="ms__badge">{b.attentionUnread > 9 ? "9+" : b.attentionUnread}</b>}
               </button>
             ))}
           </div>

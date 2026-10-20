@@ -142,8 +142,13 @@ export class AtlasService {
         if (!live) this.keep(f.id, distanceNm);
       }
     }
-    const from = pick(f.startLat, f.startLon);
+    let from = pick(f.startLat, f.startLon);
     const to = pick(f.endLat, f.endLon);
+    // Older flights whose start was lost (recorded from the menu) count as flown from the plan's departure when they ended at its arrival.
+    if (!from && f.startLat === null && f.planDep && f.planArr && to?.icao === f.planArr) {
+      const a = this.airports.get(f.planDep);
+      if (a) from = { icao: a.icao, name: a.name };
+    }
     const onPlan = !!f.planDep && !!f.planArr && from?.icao === f.planDep && to?.icao === f.planArr;
     const out: FlightFacts = { onPlan, from, to, distanceNm };
     if (!live && (f.distanceNm !== null || distanceNm > 0)) this.facts.set(key, out);

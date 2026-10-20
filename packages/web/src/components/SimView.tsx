@@ -2,6 +2,95 @@ import { useEffect, useRef, useState } from "react";
 import type { ChaseViewInfo, PanelCommand, SimViewState } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { useBridgeActions, watchSimView } from "../lib/useBridge";
+import { apiFetch } from "../lib/api";
+import { IconCamera } from "./icons";
+
+type Shot = { name: string; url: string; file: File; w: number; h: number };
+
+/**
+ * A full-size screenshot of the simulator: taken on the PC (and kept there, in VBuddy's "screenshots" folder),
+ * then shown here with a button to save it to this phone. Saving needs its own tap: phones only open the
+ * share sheet (Save Image) straight after one.
+ */
+function Screenshot({ allowed }: { allowed: boolean }) {
+  const { screenshot } = useBridgeActions();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [shot, setShot] = useState<Shot | null>(null);
+  useEffect(() => () => void (shot && URL.revokeObjectURL(shot.url)), [shot]);
+
+  const take = async () => {
+    setBusy(true);
+    setError("");
+    const r = await screenshot();
+    if (!r.ok) {
+      setBusy(false);
+      return setError(r.error);
+    }
+    try {
+      const res = await apiFetch(`/api/screenshots/${encodeURIComponent(r.name)}`);
+      if (!res.ok) throw new Error(`the PC answered ${res.status}`);
+      const blob = await res.blob();
+      const file = new File([blob], r.name, { type: "image/jpeg" });
+      setShot({ name: r.name, url: URL.createObjectURL(blob), file, w: r.w, h: r.h });
+    } catch (e) {
+      setError(`The screenshot was saved on the PC, but couldn't be loaded here: ${(e as Error).message}`);
+    }
+    setBusy(false);
+  };
+  const canShare = !!shot && typeof navigator.canShare === "function" && navigator.canShare({ files: [shot.file] });
+  const save = async () => {
+    if (!shot) return;
+    if (canShare) {
+      try {
+        await navigator.share({ files: [shot.file], title: "VBuddy screenshot" });
+        return;
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return;
+      }
+    }
+    const a = document.createElement("a");
+    a.href = shot.url;
+    a.download = shot.name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+  };
+
+  return (
+    <div className="shot">
+      <div className="shot__bar">
+        <button type="button" className="btn btn--primary" disabled={!allowed || busy} onClick={() => void take()}>
+          <IconCamera /> {busy ? "Taking screenshot…" : "Take screenshot"}
+        </button>
+        {!allowed && <span className="muted">Pair this device to take screenshots.</span>}
+      </div>
+      {error && (
+        <p className="setval__err" role="status">
+          {error}
+        </p>
+      )}
+      {shot && (
+        <figure className="shot__fig">
+          <img src={shot.url} alt={`Screenshot, ${shot.w} by ${shot.h}`} />
+          <figcaption>
+            <span className="muted">
+              {shot.w} × {shot.h} · {Math.round(shot.file.size / 1024)} KB · also saved on the PC
+            </span>
+            <span className="shot__actions">
+              <button type="button" className="btn btn--primary" onClick={() => void save()}>
+                {canShare ? "Save to phone" : "Download"}
+              </button>
+              <button type="button" className="btn btn--ghost" onClick={() => setShot(null)}>
+                Close
+              </button>
+            </span>
+          </figcaption>
+        </figure>
+      )}
+    </div>
+  );
+}
 
 const WAITING: Record<SimViewState, string> = {
   starting: "Connecting to the sim view…",
@@ -77,6 +166,7 @@ export function SimView({ b }: { b: BridgeSnapshot }) {
           Full screen
         </button>
       </div>
+      <Screenshot allowed={!!b.control?.allowed && b.link === "open"} />
 
       {!hasChase && (
         <div className="systems__group" role="group" aria-label="Camera view">

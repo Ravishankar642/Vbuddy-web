@@ -20,6 +20,13 @@ export interface SavedFlight {
   distanceNm?: number;
   /** Flown on the route of the SimBrief plan filled in for it: only these are logged in the Atlas. */
   onPlan?: boolean;
+  /** The SimBrief plan tied to the flight. */
+  planDep?: string | null;
+  planArr?: string | null;
+  planCallsign?: string | null;
+  planRoute?: string | null;
+  planDistanceNm?: number | null;
+  planEteMin?: number | null;
 }
 
 export interface AtlasAirport {

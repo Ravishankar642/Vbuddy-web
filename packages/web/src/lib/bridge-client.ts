@@ -10,6 +10,8 @@ import {
   type ChaseCommand,
   type ChaseViewInfo,
   type FlightAlert,
+  type FlightEvent,
+  type FlightPlanInfo,
   type CockpitCommand,
   type ControlInfo,
   type FcuState,
@@ -46,6 +48,11 @@ export interface BridgeSnapshot {
   retryIn: number;
   sim: SimStatus | null;
   latest: TelemetryFrame | null;
+  /**
+   * When `latest` was produced, on this device's clock (ms). The frame's own `ts` is the PC's clock, which can be
+   * seconds away from the phone's, so ages are measured from this.
+   */
+  latestAt: number;
   telemetryHz: number;
   bridgeVersion: string | null;
   /** Frames the bridge produced that this client never received (couldn't be replayed). */
@@ -104,7 +111,13 @@ export interface BridgeSnapshot {
   lastAttention: ChatMessage | null;
   /** A landing that happened since this page loaded (live, or while it was disconnected). Cleared by dismissNewLanding(). */
   newLanding: LandingSummary | null;
+  /** The SimBrief plan for the flight in progress (or the latest one). Null = none. */
+  plan: FlightPlanInfo | null;
+  /** The latest flight milestone (takeoff, top of climb…) not yet dismissed. */
+  flightEvent: (FlightEvent & { receivedAt: number }) | null;
 }
+
+export type ShotReply = { ok: true; name: string; w: number; h: number; bytes: number } | { ok: false; error: string };
 
 const MAX_CACHED_DETAILS = 40;
 const READ_KEY = "vbuddy.chat.readAt";
@@ -202,8 +215,11 @@ export class BridgeClient {
   private pendingComms = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private pendingPanel = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private pendingChase = new Map<string, { done: (r: ChaseReply) => void; timer: number }>();
+  private pendingShot = new Map<string, { done: (r: ShotReply) => void; timer: number }>();
   private pendingLeg = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private readAt: Record<string, number> = loadReadAt();
+  /** This device's clock minus the PC's (ms), from the last live frame. */
+  private clockOffset: number | null = null;
   private attentionCbs = new Set<(m: ChatMessage) => void>();
 
   private snap: BridgeSnapshot = {
@@ -211,6 +227,7 @@ export class BridgeClient {
     retryIn: 0,
     sim: null,
     latest: null,
+    latestAt: 0,
     telemetryHz: 0,
     bridgeVersion: null,
     missedFrames: 0,
@@ -243,6 +260,8 @@ export class BridgeClient {
     lastAttention: null,
     details: {},
     newLanding: null,
+    plan: null,
+    flightEvent: null,
   };
   private seenLandings = new Set<string>();
   private gotLandingList = false;
@@ -376,6 +395,19 @@ export class BridgeClient {
       this.send({ t: "chaseCmd", id, cmd });
     });
   };
+  /** Takes a full-size screenshot of the simulator; it's saved on the PC and can be fetched from /api/screenshots/<name>. */
+  screenshot = (): Promise<ShotReply> => {
+    if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
+    const id = `s${++this.cmdSeq}`;
+    return new Promise((done) => {
+      const timer = window.setTimeout(() => {
+        this.pendingShot.delete(id);
+        done({ ok: false, error: "No answer from the bridge." });
+      }, CMD_TIMEOUT_MS);
+      this.pendingShot.set(id, { done, timer });
+      this.send({ t: "screenshot", id });
+    });
+  };
   /** Adds, changes or deletes a planned flight. */
   legCommand = (cmd: LegCommand): Promise<CmdReply> => {
     if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
@@ -443,6 +475,15 @@ export class BridgeClient {
   };
   dismissFlightAlert = () => {
     if (this.snap.flightAlert) this.update({ flightAlert: null });
+  };
+  dismissFlightEvent = () => {
+    if (this.snap.flightEvent) this.update({ flightEvent: null });
+  };
+  /** Tells the bridge whether the app is on screen, so it doesn't push notifications this device already shows. */
+  private visible = typeof document === "undefined" || document.visibilityState === "visible";
+  setVisible = (v: boolean) => {
+    this.visible = v;
+    this.send({ t: "visibility", visible: v });
   };
   dismissNewLanding = () => {
     if (this.snap.newLanding) this.update({ newLanding: null });
@@ -557,6 +598,11 @@ export class BridgeClient {
         p.done({ ok: false, error: "Lost the connection to the bridge." });
       }
       this.pendingPanel.clear();
+      for (const [, p] of this.pendingShot) {
+        clearTimeout(p.timer);
+        p.done({ ok: false, error: "The connection to the bridge dropped." });
+      }
+      this.pendingShot.clear();
       for (const [, p] of this.pendingChase) {
         clearTimeout(p.timer);
         p.done({ ok: false, error: "Lost the connection to the bridge." });
@@ -596,8 +642,13 @@ export class BridgeClient {
     }
     if (!fresh.length) return;
     for (const l of this.frameListeners) l(fresh, replay);
+    const last = fresh[fresh.length - 1]!;
+    // A live frame is from now; that also tells how far the PC's clock is from this one. A replayed frame is as old
+    // as its PC timestamp says, shifted by that difference.
+    if (!replay) this.clockOffset = Date.now() - last.ts;
     this.update({
-      latest: fresh[fresh.length - 1]!,
+      latest: last,
+      latestAt: replay ? last.ts + (this.clockOffset ?? 0) : Date.now(),
       missedFrames: this.snap.missedFrames + missed,
       replayedFrames: this.snap.replayedFrames + (replay ? fresh.length : 0),
     });
@@ -626,6 +677,7 @@ export class BridgeClient {
         });
         this.everOpened = true;
         if (this.area) this.send({ t: "trafficArea", ...this.area });
+        this.send({ t: "visibility", visible: this.visible });
         if (this.simViewCbs.size) this.send({ t: "simView", on: true });
         if (this.cduCb) this.send({ t: "cduView", on: true, side: this.cduSide });
         break;
@@ -688,6 +740,21 @@ export class BridgeClient {
       case "flightAlert":
         this.update({ flightAlert: { ...m.alert, receivedAt: Date.now() } });
         break;
+      case "flightEvent":
+        this.update({ flightEvent: { ...m.event, receivedAt: Date.now() } });
+        break;
+      case "flightPlan":
+        this.update({ plan: m.plan });
+        break;
+      case "screenshotResult": {
+        const p = this.pendingShot.get(m.id);
+        if (p) {
+          clearTimeout(p.timer);
+          this.pendingShot.delete(m.id);
+          p.done(m.ok && m.name ? { ok: true, name: m.name, w: m.w ?? 0, h: m.h ?? 0, bytes: m.bytes ?? 0 } : { ok: false, error: m.error ?? "The screenshot didn't work." });
+        }
+        break;
+      }
       case "atcAlert":
         this.update({ atcAlert: { ...m.alert, receivedAt: Date.now() } });
         break;

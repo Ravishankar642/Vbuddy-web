@@ -185,6 +185,22 @@ export const PushPrefsSchema = z.object({
   atcAheadNm: z.number().int().min(5).max(150).default(40),
   /** At most this many "boundary ahead" / "no ATC" notifications per hour (0 = no limit). */
   atcPerHour: z.number().int().min(0).max(60).default(0),
+  /** Wheels up. */
+  takeoff: z.boolean().default(true),
+  /** Levelled off at the cruise altitude (top of climb). */
+  toc: z.boolean().default(true),
+  /** Passing 10,000 ft, climbing and descending. */
+  tenK: z.boolean().default(false),
+  /** This many minutes before reaching the destination (0 = no notice). Needs a SimBrief plan. */
+  approachMin: z.number().int().min(0).max(60).default(0),
+  /** Parked at the gate after landing (parking brake set, engines off). */
+  gate: z.boolean().default(true),
+  /** The simulator closed or stopped sending data in the middle of a flight. */
+  simLost: z.boolean().default(true),
+  /** The SimBrief plan was loaded for this flight (when you connect to VATSIM). */
+  planLoaded: z.boolean().default(true),
+  /** The simulator paused itself (the "pause later" point, or before the top of descent). */
+  paused: z.boolean().default(true),
 });
 export type PushPrefs = z.infer<typeof PushPrefsSchema>;
 
@@ -227,6 +243,54 @@ export const ErrorMsgSchema = z.object({
   message: z.string(),
 });
 
+/** Things that happen during a flight, shown as a note in the open app (and pushed to devices that want them). */
+export const FlightEventSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["takeoff", "toc", "tenK", "tod", "approach", "gate", "simLost", "planLoaded", "paused", "flightStart"]),
+  title: z.string(),
+  text: z.string(),
+});
+export type FlightEvent = z.infer<typeof FlightEventSchema>;
+export const FlightEventMsgSchema = z.object({ ...base, t: z.literal("flightEvent"), event: FlightEventSchema });
+
+/** The SimBrief plan tied to the flight in progress (or the latest one, before a flight starts). Null = none. */
+export const FlightPlanMsgSchema = z.object({
+  ...base,
+  t: z.literal("flightPlan"),
+  plan: z
+    .object({
+      ofpId: z.string().nullable(),
+      callsign: z.string().nullable(),
+      dep: z.string(),
+      arr: z.string(),
+      route: z.string().nullable(),
+      distanceNm: z.number().nullable(),
+      eteMin: z.number().nullable(),
+      cruiseFt: z.number().nullable(),
+      aircraft: z.string().nullable(),
+      /** The route's fixes that have a position, for the map. */
+      fixes: z.array(z.object({ ident: z.string(), lat: z.number(), lon: z.number() })).max(2000),
+      /** True when it belongs to the flight being recorded (its departure matches where the flight began). */
+      matched: z.boolean(),
+      loadedAt: z.number(),
+    })
+    .nullable(),
+});
+export type FlightPlanInfo = NonNullable<z.infer<typeof FlightPlanMsgSchema>["plan"]>;
+
+/** A full-size screenshot of the simulator was taken and saved on the PC; fetch it from /api/screenshots/<name>. */
+export const ScreenshotResultSchema = z.object({
+  ...base,
+  t: z.literal("screenshotResult"),
+  id: z.string().max(40),
+  ok: z.boolean(),
+  name: z.string().max(120).optional(),
+  w: z.number().int().optional(),
+  h: z.number().int().optional(),
+  bytes: z.number().int().optional(),
+  error: z.string().max(300).optional(),
+});
+
 /** Live sim view: one JPEG frame of the simulator window (base64, no data: prefix). Sent only to devices that asked and are paired. */
 export const SimViewFrameSchema = z.object({ ...base, t: z.literal("simViewFrame"), seq: z.number().int(), jpeg: z.string().max(3_000_000), w: z.number().int(), h: z.number().int() });
 export const SimViewStateSchema = z.enum(["starting", "live", "no-window", "minimized", "unavailable", "not-allowed"]);
@@ -243,6 +307,9 @@ export const CduResultSchema = z.object({ ...base, t: z.literal("cduResult"), ok
 export const SimViewStatusSchema = z.object({ ...base, t: z.literal("simViewStatus"), state: SimViewStateSchema, message: z.string().max(300).optional() });
 
 export const ServerMessageSchema = z.discriminatedUnion("t", [
+  FlightEventMsgSchema,
+  FlightPlanMsgSchema,
+  ScreenshotResultSchema,
   CduMsgSchema,
   CduResultSchema,
   ChaseResultSchema,
@@ -364,10 +431,17 @@ export const CduViewSchema = z.object({ ...base, t: z.literal("cduView"), on: z.
 /** Press a key on a PMDG CDU (paired devices only). */
 export const CduKeyMsgSchema = z.object({ ...base, t: z.literal("cduKey"), side: z.number().int().min(0).max(2), key: CduKeySchema });
 
+/** Take a full-size screenshot of the simulator window (paired devices). */
+export const ScreenshotCmdSchema = z.object({ ...base, t: z.literal("screenshot"), id: z.string().max(40) });
+/** The app is on screen (true) or in the background (false): notifications are only pushed to devices that aren't looking. */
+export const VisibilitySchema = z.object({ ...base, t: z.literal("visibility"), visible: z.boolean() });
+
 /** Start (on) or stop watching the live sim view. */
 export const SimViewSchema = z.object({ ...base, t: z.literal("simView"), on: z.boolean() });
 
 export const ClientMessageSchema = z.discriminatedUnion("t", [
+  ScreenshotCmdSchema,
+  VisibilitySchema,
   CduViewSchema,
   CduKeyMsgSchema,
   SimViewSchema,

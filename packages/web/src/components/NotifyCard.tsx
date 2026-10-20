@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PushPrefs } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { useBridgeActions } from "../lib/useBridge";
-import { pushSupport, subscribeBrowser, unsubscribeBrowser } from "../lib/push";
+import { existingSubscription, pushSupport, subscribeBrowser, unsubscribeBrowser } from "../lib/push";
 
 const WHY: Record<string, string> = {
-  insecure: "Notifications need a secure (https) address, like your relay. They can't work on a plain http://192.168… address.",
+  insecure: "Notifications need a secure (https) address, like your relay link. They can't work on a plain http://192.168… address.",
   "ios-install": "On iPhone and iPad, add VBuddy to your Home Screen first (Share → Add to Home Screen), then open it from there to turn notifications on.",
   unsupported: "This browser can't receive notifications.",
 };
@@ -13,15 +13,86 @@ const WHY: Record<string, string> = {
 /** The usual choices, plus whatever value is saved if it isn't one of them (so the box never shows something untrue). */
 const withCurrent = (opts: number[], cur: number) => (opts.includes(cur) ? opts : [...opts, cur].sort((a, b) => a - b));
 
-/** Phone/tablet notifications for ATC contact changes and touchdowns. Hidden when the bridge has them switched off. */
-export function NotifyCard({ b }: { b: BridgeSnapshot }) {
+type BoolPref = { [K in keyof PushPrefs]: PushPrefs[K] extends boolean ? K : never }[keyof PushPrefs];
+
+function Toggle({ label, hint, on, disabled, onChange }: { label: string; hint?: string; on: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className={`sw${disabled ? " is-off" : ""}`}>
+      <span className="sw__text">
+        <b>{label}</b>
+        {hint && <small>{hint}</small>}
+      </span>
+      <input type="checkbox" role="switch" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <i aria-hidden />
+    </label>
+  );
+}
+
+function Pick({ label, value, options, render, disabled, onChange }: { label: string; value: number; options: number[]; render: (v: number) => string; disabled?: boolean; onChange: (v: number) => void }) {
+  return (
+    <label className={`sw sw--pick${disabled ? " is-off" : ""}`}>
+      <span className="sw__text">
+        <b>{label}</b>
+      </span>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))}>
+        {withCurrent(options, value).map((v) => (
+          <option key={v} value={v}>
+            {render(v)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="card notify__group">
+      <h2 className="card__title">{title}</h2>
+      <div className="notify__list">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * This browser already has permission and a subscription, but the bridge doesn't know it (paired again, a new
+ * bridge data folder, or a subscription made before): hand it over again, so notifications keep arriving.
+ * Runs whenever the app opens.
+ */
+export function usePushResync(b: BridgeSnapshot) {
+  const { pushSubscribe } = useBridgeActions();
+  const done = useRef(false);
+  const p = b.push;
+  const paired = b.control?.reason === "paired";
+  useEffect(() => {
+    if (!p || p.subscribed || !paired || done.current || !p.publicKey || pushSupport() !== "ok") return;
+    done.current = true;
+    void existingSubscription(p.publicKey).then((sub) => {
+      if (sub) pushSubscribe(sub, p.prefs);
+    });
+  }, [p, paired, pushSubscribe]);
+}
+
+/**
+ * Notifications: one switch for this device, then what to be told about. They reach the phone even with VBuddy
+ * closed (through the browser's push service); while the app is on screen the same things show inside it.
+ */
+export function NotificationsPage({ b }: { b: BridgeSnapshot }) {
   const { pushSubscribe, pushUnsubscribe, pushTest } = useBridgeActions();
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const p = b.push;
-  if (!p) return null;
   const support = pushSupport();
   const paired = b.control?.reason === "paired";
+
+  if (!p) {
+    return (
+      <section className="card">
+        <h2 className="card__title">Notifications</h2>
+        <p className="muted">Notifications are switched off on the bridge (VBUDDY_PUSH in the settings file on the PC).</p>
+      </section>
+    );
+  }
 
   const turnOn = async (prefs: PushPrefs) => {
     if (!p.publicKey) return;
@@ -36,110 +107,88 @@ export function NotifyCard({ b }: { b: BridgeSnapshot }) {
     await unsubscribeBrowser();
     pushUnsubscribe();
   };
-  const setPref = <K extends keyof PushPrefs>(k: K, v: PushPrefs[K]) => {
-    const next = { ...p.prefs, [k]: v };
-    if (p.subscribed) void turnOn(next);
+  const set = <K extends keyof PushPrefs>(k: K, v: PushPrefs[K]) => {
+    if (p.subscribed) void turnOn({ ...p.prefs, [k]: v });
   };
+  const sw = (k: BoolPref, label: string, hint?: string, disabled?: boolean) => <Toggle label={label} hint={hint} on={!!p.prefs[k]} disabled={!p.subscribed || disabled} onChange={(v) => set(k, v)} />;
+  const off = !p.subscribed || !paired || support !== "ok";
 
   return (
-    <section className="card notify">
-      <h2 className="card__title">Notifications</h2>
-      {!paired ? (
-        <p className="muted">Pair this device under Systems → Controls to get notifications when VBuddy isn't open.</p>
-      ) : support !== "ok" ? (
-        <p className="muted">{WHY[support]}</p>
-      ) : (
-        <>
-          <p className="muted">Get a message on this device when ATC or a pilot messages you, a new controller takes over, a boundary is coming up, you touch down, VATSIM connects or drops, or something is wrong with the aircraft, even with VBuddy closed.</p>
-          {p.subscribed && (
-            <>
-              <div className="notify__prefs">
-                <label>
-                  <input type="checkbox" checked={p.prefs.atc} onChange={(e) => setPref("atc", e.target.checked)} /> ATC changes and boundaries
-                </label>
-                <label>
-                  <input type="checkbox" checked={p.prefs.chat} onChange={(e) => setPref("chat", e.target.checked)} /> Messages (DMs, ATC calls to you)
-                </label>
-                <label>
-                  <input type="checkbox" checked={p.prefs.landing} onChange={(e) => setPref("landing", e.target.checked)} /> Touchdown result
-                </label>
-                <label>
-                  <input type="checkbox" checked={p.prefs.vatsim} onChange={(e) => setPref("vatsim", e.target.checked)} /> VATSIM connected / disconnected
-                </label>
-                <label>
-                  <input type="checkbox" checked={p.prefs.alerts} onChange={(e) => setPref("alerts", e.target.checked)} /> Aircraft alerts (engine, stall, overspeed, gear, sink rate, fuel)
-                </label>
-                <label>
-                  <input type="checkbox" checked={p.prefs.apOff} onChange={(e) => setPref("apOff", e.target.checked)} /> Autopilot switches off in the cruise
-                </label>
-              </div>
-              <div className="notify__sel">
-                <label>
-                  <span>Tell me before the top of descent</span>
-                  <select value={p.prefs.todMin} onChange={(e) => setPref("todMin", Number(e.target.value))}>
-                    {withCurrent([0, 5, 10, 15, 20, 30], p.prefs.todMin).map((v) => (
-                      <option key={v} value={v}>
-                        {v === 0 ? "Don't tell me" : `${v} min before`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Warn about low fuel when less than</span>
-                  <select value={p.prefs.fuelMin} disabled={!p.prefs.alerts} onChange={(e) => setPref("fuelMin", Number(e.target.value))}>
-                    {withCurrent([0, 15, 20, 30, 45, 60, 90], p.prefs.fuelMin).map((v) => (
-                      <option key={v} value={v}>
-                        {v === 0 ? "Don't warn" : `${v} min left`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Tell me about an ATC boundary when it is</span>
-                  <select value={p.prefs.atcAheadNm} disabled={!p.prefs.atc} onChange={(e) => setPref("atcAheadNm", Number(e.target.value))}>
-                    {withCurrent([10, 20, 30, 40, 60, 80, 100, 150], p.prefs.atcAheadNm).map((v) => (
-                      <option key={v} value={v}>
-                        {v} nm ahead
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Boundary and no-ATC notices</span>
-                  <select value={p.prefs.atcPerHour} disabled={!p.prefs.atc} onChange={(e) => setPref("atcPerHour", Number(e.target.value))}>
-                    {withCurrent([0, 2, 3, 5, 10, 20], p.prefs.atcPerHour).map((v) => (
-                      <option key={v} value={v}>
-                        {v === 0 ? "No limit" : `At most ${v} per hour`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </>
-          )}
-          <div className="notify__row">
-            {p.subscribed ? (
-              <>
+    <div className="notify">
+      <section className="card notify__master">
+        {!paired ? (
+          <p className="muted">Pair this device under Systems → Controls to get notifications when VBuddy isn't open.</p>
+        ) : support !== "ok" ? (
+          <p className="muted">{WHY[support]}</p>
+        ) : (
+          <>
+            <Toggle
+              label="Notifications on this device"
+              hint={p.subscribed ? "On. They arrive even with VBuddy closed." : "Off. Turn on to be told about your flight while you're away from the PC."}
+              on={p.subscribed}
+              disabled={busy || !p.publicKey}
+              onChange={(v) => void (v ? turnOn(p.prefs) : turnOff())}
+            />
+            {p.subscribed && (
+              <div className="notify__row">
                 <button type="button" className="btn" onClick={pushTest}>
                   Send a test
                 </button>
-                <button type="button" className="btn btn--ghost" onClick={turnOff}>
-                  Turn off
-                </button>
-              </>
-            ) : (
-              <button type="button" className="btn btn--primary" disabled={busy || !p.publicKey} onClick={() => void turnOn(p.prefs)}>
-                {busy ? "Turning on…" : "Turn on notifications"}
-              </button>
+              </div>
             )}
-          </div>
-        </>
+          </>
+        )}
+        {(err || p.note) && (
+          <p className={err ? "setval__err" : "muted"} role="status">
+            {err ?? p.note}
+          </p>
+        )}
+      </section>
+
+      {(
+        <div className={off ? "notify__dim" : undefined} aria-disabled={off}>
+          <Group title="Your flight">
+            {sw("takeoff", "Takeoff", "Wheels up.")}
+            {sw("toc", "Top of climb", "Levelled off at the cruise altitude.")}
+            {sw("tenK", "Passing 10,000 ft", "Climbing and descending.")}
+            <Pick label="Top of descent" value={p.prefs.todMin} options={[0, 5, 10, 15, 20, 30]} render={(v) => (v === 0 ? "Off" : `${v} min before`)} disabled={off} onChange={(v) => set("todMin", v)} />
+            <Pick label="Approaching the destination" value={p.prefs.approachMin} options={[0, 5, 10, 15, 20, 30]} render={(v) => (v === 0 ? "Off" : `${v} min before`)} disabled={off} onChange={(v) => set("approachMin", v)} />
+            {sw("landing", "Touchdown", "Rate, G and the rating.")}
+            {sw("gate", "At the gate", "Parked, parking brake set, engines off.")}
+          </Group>
+          <Group title="ATC and VATSIM">
+            {sw("atc", "New controller and boundaries", "Who to contact next, and leaving ATC coverage.")}
+            <Pick label="Boundary warning" value={p.prefs.atcAheadNm} options={[10, 20, 30, 40, 60, 80, 100, 150]} render={(v) => `${v} nm ahead`} disabled={off || !p.prefs.atc} onChange={(v) => set("atcAheadNm", v)} />
+            <Pick label="Boundary notices" value={p.prefs.atcPerHour} options={[0, 2, 3, 5, 10, 20]} render={(v) => (v === 0 ? "No limit" : `At most ${v} an hour`)} disabled={off || !p.prefs.atc} onChange={(v) => set("atcPerHour", v)} />
+            {sw("chat", "Messages", "Private messages, SELCAL, calls with your callsign, ACARS.")}
+            {sw("vatsim", "VATSIM connected or disconnected")}
+            {sw("planLoaded", "Flight plan loaded", "Your SimBrief plan, when you connect to VATSIM.")}
+          </Group>
+          <Group title="Aircraft and simulator">
+            {sw("alerts", "Aircraft alerts", "Engine, stall, overspeed, gear, sink rate, fuel.")}
+            <Pick label="Low fuel warning" value={p.prefs.fuelMin} options={[0, 15, 20, 30, 45, 60, 90]} render={(v) => (v === 0 ? "Off" : `Under ${v} min left`)} disabled={off || !p.prefs.alerts} onChange={(v) => set("fuelMin", v)} />
+            {sw("apOff", "Autopilot off in the cruise")}
+            {sw("simLost", "Simulator stopped", "MSFS closed or stopped sending data mid-flight.")}
+            {sw("paused", "Simulator paused", "When VBuddy pauses it for you (Pause later).")}
+          </Group>
+        </div>
       )}
-      {(err || p.note) && (
-        <p className={err ? "setval__err" : "muted"} role="status">
-          {err ?? p.note}
-        </p>
-      )}
+    </div>
+  );
+}
+
+/** Kept for the Settings page: a short note pointing to the Notifications page. */
+export function NotifyCard({ b, open }: { b: BridgeSnapshot; open: () => void }) {
+  if (!b.push) return null;
+  return (
+    <section className="card">
+      <h2 className="card__title">Notifications</h2>
+      <p className="muted">{b.push.subscribed ? "On for this device." : "Off for this device."}</p>
+      <div className="notify__row">
+        <button type="button" className="btn" onClick={open}>
+          Choose notifications
+        </button>
+      </div>
     </section>
   );
 }

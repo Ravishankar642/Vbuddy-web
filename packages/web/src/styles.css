@@ -881,3 +881,65 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .cdu__typerow { display: flex; gap: 8px; }
 .cdu__typerow input { flex: 1; min-width: 0; min-height: 42px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--input); color: var(--text); font: 600 16px var(--mono); letter-spacing: 0.06em; }
 @media (prefers-reduced-motion: reduce) { .cdu__key:active:not(:disabled) { transform: none; } }
+
+/* ---------------------------------------------------------------- 1.2: header buttons, weather, plan, events */
+.ms__headR { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.ms__bell { appearance: none; position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--glass-edge); background: var(--glass); color: var(--text); cursor: pointer; }
+.ms__bell svg { width: 22px; height: 22px; }
+.ms__bell.is-on { color: var(--accent); }
+.ms__bell i { position: absolute; top: -1px; right: -1px; width: 12px; height: 12px; border-radius: 50%; background: var(--warn); border: 2px solid var(--panel); }
+.ms__fab { position: relative; }
+.ms__fabDot { position: absolute; bottom: 9px; right: 11px; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+.plan-line { stroke: var(--plan, #6fb7ff); fill: none; }
+.plan-line--other { stroke: var(--muted); opacity: 0.6; }
+.plan-end span { position: absolute; transform: translate(-50%, -150%); padding: 1px 6px; border-radius: 6px; background: var(--overlay); color: var(--text); font: 700 12px var(--num); letter-spacing: 0.04em; white-space: nowrap; border: 1px solid var(--edge); }
+
+.shot { margin-top: 12px; display: grid; gap: 10px; }
+.shot__bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.shot__bar .btn svg { width: 18px; height: 18px; vertical-align: -3px; margin-right: 4px; }
+.shot__fig { margin: 0; display: grid; gap: 8px; }
+.shot__fig img { width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--edge); background: #000; }
+.shot__fig figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.shot__actions { display: flex; gap: 8px; }
+
+/* The flight nameplate: the airline's mark, who you're flying as, and the plan. */
+.plate { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; align-items: center; padding: 14px 16px; margin: 0 0 12px; border-radius: var(--r-card); background: linear-gradient(115deg, color-mix(in srgb, var(--brand) 22%, var(--well)) 0%, var(--well) 58%); border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--edge)); }
+.plate__mark { grid-row: span 2; width: 58px; height: 58px; border-radius: 16px; display: grid; place-items: center; overflow: hidden; background: linear-gradient(145deg, var(--brand-hi), var(--brand) 60%, var(--brand-deep)); color: #fff; box-shadow: 0 6px 18px -10px var(--brand-deep); }
+.plate__mark span { font: 700 24px var(--num); letter-spacing: 0.04em; }
+.plate__mark img { width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 6px; }
+.plate__who { display: grid; min-width: 0; }
+.plate__who b { font-size: 17px; line-height: 1.2; }
+.plate__who span { font: 600 18px var(--num); letter-spacing: 0.05em; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.plate__who em { font: 600 12px var(--ui); letter-spacing: 0; font-style: normal; color: var(--muted); }
+.plate__who em.plate__live { color: var(--ok); }
+.plate__plan { grid-column: 2; display: grid; gap: 2px; min-width: 0; }
+.plate__route { display: flex; align-items: baseline; gap: 10px; font: 700 26px var(--num); letter-spacing: 0.05em; line-height: 1.1; }
+.plate__route i { font-style: normal; color: var(--accent); font-size: 20px; }
+.plate__plan small { color: var(--muted); font-size: 13px; }
+.plate__plan.is-other .plate__route { opacity: 0.55; }
+.plate__warn { color: var(--warn) !important; }
+@media (max-width: 380px) { .plate__route { font-size: 22px; } .plate__mark { width: 48px; height: 48px; } }
+
+/* Switch rows (notifications, settings). */
+.sw { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 52px; padding: 8px 0; cursor: pointer; }
+.sw + .sw { border-top: 1px solid var(--edge); }
+.sw__text { display: grid; gap: 1px; min-width: 0; }
+.sw__text b { font-weight: 650; font-size: 15px; }
+.sw__text small { color: var(--muted); font-size: 13px; }
+.sw input[type="checkbox"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.sw i { flex: none; position: relative; width: 50px; height: 30px; border-radius: 99px; background: var(--raised-2); border: 1px solid var(--edge-strong); transition: background 0.2s; }
+.sw i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
+.sw input:checked + i { background: var(--accent); border-color: var(--accent); }
+.sw input:checked + i::after { transform: translateX(20px); }
+.sw input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sw.is-off { cursor: default; opacity: 0.55; }
+.sw--pick select { flex: none; font: inherit; color: var(--text); min-height: 40px; max-width: 52%; background: var(--panel); border: 1px solid var(--edge); border-radius: 10px; padding: 4px 8px; }
+.notify { display: grid; gap: 0; }
+.notify__master .sw b { font-size: 16px; }
+.notify__group .card__title { margin-bottom: 2px; }
+.notify__list { display: grid; }
+.notify__dim { opacity: 0.6; }
+
+.toast--event { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.toast--event .toast__text { flex: 1; }

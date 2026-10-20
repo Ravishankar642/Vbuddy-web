@@ -1,4 +1,4 @@
-import { formatMhz, PushPrefsSchema, type AtcAlert, type AcarsMessage, type AtcPosition, type ChatMessage, type FlightAlert, type LandingSummary, type PushInfoMsg, type PushPrefs } from "@vbuddy/protocol";
+import { formatMhz, PushPrefsSchema, type AtcAlert, type AcarsMessage, type AtcPosition, type ChatMessage, type FlightAlert, type FlightEvent, type LandingSummary, type PushInfoMsg, type PushPrefs } from "@vbuddy/protocol";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import webpush from "web-push";
@@ -18,12 +18,45 @@ export interface PushPayload {
   body: string;
   /** Same tag replaces an earlier notification instead of stacking. */
   tag: string;
-  kind: "atc" | "landing" | "chat" | "vatsim" | "alert" | "test";
+  kind: "atc" | "landing" | "chat" | "vatsim" | "alert" | "event" | "test";
   url: string;
 }
 export type PushSender = (sub: PushSubscriptionJson, payload: string, opts: { TTL: number; urgency: "normal" | "high" }) => Promise<{ statusCode: number }>;
 
-export const DEFAULT_PREFS: PushPrefs = { atc: true, landing: true, chat: true, vatsim: true, alerts: true, apOff: false, todMin: 10, fuelMin: 30, atcAheadNm: 40, atcPerHour: 0 };
+export const DEFAULT_PREFS: PushPrefs = {
+  atc: true,
+  landing: true,
+  chat: true,
+  vatsim: true,
+  alerts: true,
+  apOff: false,
+  todMin: 10,
+  fuelMin: 30,
+  atcAheadNm: 40,
+  atcPerHour: 0,
+  takeoff: true,
+  toc: true,
+  tenK: false,
+  approachMin: 0,
+  gate: true,
+  simLost: true,
+  planLoaded: true,
+  paused: true,
+};
+
+/** Which choice switches each flight event on. */
+const EVENT_PREF: Record<FlightEvent["kind"], (p: PushPrefs) => boolean> = {
+  takeoff: (p) => p.takeoff,
+  toc: (p) => p.toc,
+  tenK: (p) => p.tenK,
+  tod: () => false, // sent per device by notifyTod, at each device's own lead time
+  approach: () => false, // likewise notifyApproach
+  gate: (p) => p.gate,
+  simLost: (p) => p.simLost,
+  planLoaded: (p) => p.planLoaded,
+  paused: (p) => p.paused,
+  flightStart: () => false,
+};
 
 /** Saved choices from an older version lack the newer fields; fill them in, and keep numbers in range. */
 export function withDefaults(p: Partial<PushPrefs> | undefined): PushPrefs {
@@ -40,6 +73,7 @@ interface DeviceState {
   aheadAt: number;
   fuelArmed: boolean;
   todArmed: boolean;
+  approachArmed: boolean;
 }
 
 /**
@@ -52,6 +86,8 @@ export class PushService {
   readonly publicKey: string;
   private privateKey: string;
   private sender: PushSender;
+  /** True while the device has VBuddy open on its screen: it sees everything there, so nothing is pushed to it. */
+  private watching: (deviceId: string) => boolean = () => false;
 
   constructor(
     private file: string | null,
@@ -132,9 +168,29 @@ export class PushService {
     return this.subs.length;
   }
 
-  private async deliver(targets: Saved[], p: PushPayload, ttl: number, urgency: "normal" | "high") {
+  /** Tells the service which devices have the app on screen right now. */
+  setWatching(fn: (deviceId: string) => boolean) {
+    this.watching = fn;
+  }
+
+  /** Forgets subscriptions of devices that are no longer paired (a phone paired again gets a new id). */
+  keepOnly(pairedIds: string[]) {
+    const keep = new Set(pairedIds);
+    const n = this.subs.length;
+    this.subs = this.subs.filter((s) => keep.has(s.deviceId));
+    if (this.subs.length !== n) {
+      this.log.info(`Removed ${n - this.subs.length} notification subscription(s) of devices that are no longer paired.`);
+      this.save();
+    }
+  }
+
+  private async deliver(all: Saved[], p: PushPayload, ttl: number, urgency: "normal" | "high") {
+    // A device looking at the app already shows it there (iPhones also take back permission after pushes they had to hide).
+    const targets = p.kind === "test" ? all : all.filter((t) => !this.watching(t.deviceId));
+    if (!targets.length) return 0;
     const payload = JSON.stringify(p);
     const dead: string[] = [];
+    let failed = 0;
     await Promise.all(
       targets.map(async (t) => {
         try {
@@ -142,7 +198,11 @@ export class PushService {
         } catch (e) {
           const code = (e as { statusCode?: number }).statusCode;
           if (code === 404 || code === 410) dead.push(t.deviceId);
-          else this.log.warn(`Push to a device failed (${code ?? (e as Error).message})`);
+          else {
+            failed++;
+            const body = (e as { body?: string }).body;
+            this.log.warn(`Notification "${p.title}" to a device failed (${code ?? (e as Error).message}${body ? `: ${String(body).slice(0, 160)}` : ""})`);
+          }
         }
       }),
     );
@@ -151,12 +211,14 @@ export class PushService {
       this.save();
       this.log.info(`Removed ${dead.length} notification subscription(s) the browser no longer accepts`);
     }
-    return targets.length - dead.length;
+    const sent = targets.length - dead.length - failed;
+    if (sent > 0) this.log.info(`Notification "${p.title}" sent to ${sent} device(s)`);
+    return sent;
   }
 
   private st(id: string): DeviceState {
     let d = this.state.get(id);
-    if (!d) this.state.set(id, (d = { atcSent: [], aheadKey: null, aheadAt: 0, fuelArmed: true, todArmed: false }));
+    if (!d) this.state.set(id, (d = { atcSent: [], aheadKey: null, aheadAt: 0, fuelArmed: true, todArmed: false, approachArmed: false }));
     return d;
   }
 
@@ -239,6 +301,28 @@ export class PushService {
     });
     const mins = Math.max(1, Math.round(minAway));
     return this.deliver(targets, { title: "Top of descent ahead", body: `The descent should start in about ${mins} min (${Math.round(nm)} nm).`, tag: "alert-tod", kind: "alert", url: "/" }, 600, "high");
+  }
+
+  /** Getting near the destination, per device: once, at the device's own lead time (like the top of descent). */
+  notifyApproach(minAway: number | null, nm: number | null, arr: string | null) {
+    if (minAway === null || nm === null) return Promise.resolve(0);
+    const targets = this.subs.filter((s) => {
+      const lim = s.prefs.approachMin;
+      if (lim <= 0) return false;
+      const d = this.st(s.deviceId);
+      if (minAway > lim + 1) d.approachArmed = true;
+      if (!d.approachArmed || minAway > lim) return false;
+      d.approachArmed = false;
+      return true;
+    });
+    const mins = Math.max(1, Math.round(minAway));
+    return this.deliver(targets, { title: `Approaching ${arr ?? "the destination"}`, body: `About ${mins} min (${Math.round(nm)} nm) to go.`, tag: "event-approach", kind: "event", url: "/" }, 600, "high");
+  }
+
+  /** Takeoff, top of climb, 10,000 ft, at the gate, the sim stopping, the plan loaded, the sim pausing itself. */
+  notifyEvent(e: FlightEvent) {
+    const wants = EVENT_PREF[e.kind];
+    return this.deliver(this.subs.filter((s) => wants(s.prefs)), { title: e.title, body: e.text, tag: `event-${e.kind}`, kind: "event", url: "/" }, e.kind === "simLost" ? 3600 : 600, e.kind === "simLost" ? "high" : "normal");
   }
 
   notifyVatsim(connected: boolean, callsign: string | null, pluginLinked: boolean) {

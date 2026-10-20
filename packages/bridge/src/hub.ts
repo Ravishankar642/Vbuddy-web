@@ -31,6 +31,7 @@ export class TelemetryHub {
   private archive: FrameArchive | null = null;
   /** True when the aircraft's own autopilot is on although the simulator's standard flag says off (the Fenix keeps its own). */
   private apOverride: (() => boolean) | null = null;
+  private extra: Pick<SimStatus, "inFlight" | "flight"> = {};
 
   constructor(
     private source: SimSource,
@@ -44,7 +45,7 @@ export class TelemetryHub {
     });
     source.onStatus((s) => {
       if (!s.connected) this.latest = null;
-      for (const cb of this.statusCbs) cb(s);
+      this.emitStatus();
     });
   }
 
@@ -79,8 +80,22 @@ export class TelemetryHub {
     this.statusCbs.push(cb);
   }
 
+  /** The source's status plus what the bridge works out on top (in a flight, which flight, the map trail). */
   simStatus(): SimStatus {
-    return this.source.status();
+    return { ...this.source.status(), ...this.extra };
+  }
+
+  /** Adds to the status the clients see; sent to them when it changes. */
+  patchStatus(p: Pick<SimStatus, "inFlight" | "flight">) {
+    const next = { ...this.extra, ...p };
+    if (JSON.stringify(next) === JSON.stringify(this.extra)) return;
+    this.extra = next;
+    this.emitStatus();
+  }
+
+  private emitStatus() {
+    const s = this.simStatus();
+    for (const cb of this.statusCbs) cb(s);
   }
 
   /** Highest seq produced so far, or -1. */

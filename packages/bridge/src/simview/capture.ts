@@ -12,6 +12,8 @@ export type CaptureResult =
 
 export interface FrameSource {
   grab(): Promise<CaptureResult>;
+  /** One picture at the window's full size and high quality (a screenshot to keep). */
+  shot?(): Promise<CaptureResult>;
   /** Called when nobody has asked for a frame for a while: free whatever the source holds. */
   release(): void;
 }
@@ -20,6 +22,8 @@ export interface FrameSource {
 export const MAX_W = 1024;
 export const MAX_H = 576;
 export const JPEG_QUALITY = 55;
+/** Screenshots: the window's own size, high quality. */
+export const SHOT_QUALITY = 92;
 
 /**
  * The helper that takes the picture on Windows: a PowerShell process that stays open while someone is watching.
@@ -78,6 +82,8 @@ const HELPER = [
   "$jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }",
   "$params = New-Object System.Drawing.Imaging.EncoderParameters 1",
   `$params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), ([long]${JPEG_QUALITY})`,
+  "$paramsBig = New-Object System.Drawing.Imaging.EncoderParameters 1",
+  `$paramsBig.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), ([long]${SHOT_QUALITY})`,
   "$hwnd = [IntPtr]::Zero",
   "$checked = [DateTime]::MinValue",
   "function Is-Black($bmp) {",
@@ -91,7 +97,8 @@ const HELPER = [
   "while ($true) {",
   "  $line = [Console]::In.ReadLine()",
   "  if ($line -eq $null) { break }",
-  "  if ($line -ne 'g') { continue }",
+  "  if ($line -ne 'g' -and $line -ne 's') { continue }",
+  "  $big = ($line -eq 's')",
   "  try {",
   "    if ($hwnd -eq [IntPtr]::Zero -or -not [VbCap]::IsWindow($hwnd) -or ([DateTime]::UtcNow - $checked).TotalSeconds -gt 5) { $hwnd = [VbCap]::Find(); $checked = [DateTime]::UtcNow }",
   "    if ($hwnd -eq [IntPtr]::Zero) { [Console]::Out.WriteLine('N'); [Console]::Out.Flush(); continue }",
@@ -110,14 +117,14 @@ const HELPER = [
   "    $whole.Dispose()",
   "    if (-not $okPrint -or (Is-Black $full)) { $g.CopyFromScreen($r.L, $r.T, 0, 0, (New-Object System.Drawing.Size $w, $h)) }",
   "    $g.Dispose()",
-  `    $s = [Math]::Min(1.0, [Math]::Min(${MAX_W} / $w, ${MAX_H} / $h))`,
+  `    $s = if ($big) { 1.0 } else { [Math]::Min(1.0, [Math]::Min(${MAX_W} / $w, ${MAX_H} / $h)) }`,
   "    $ow = [Math]::Max(1, [int]($w * $s)); $oh = [Math]::Max(1, [int]($h * $s))",
   "    $out = New-Object System.Drawing.Bitmap $ow, $oh",
   "    $go = [System.Drawing.Graphics]::FromImage($out)",
   "    $go.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Bilinear",
   "    $go.DrawImage($full, 0, 0, $ow, $oh); $go.Dispose(); $full.Dispose()",
   "    $ms = New-Object System.IO.MemoryStream",
-  "    $out.Save($ms, $jpeg, $params); $out.Dispose()",
+  "    if ($big) { $out.Save($ms, $jpeg, $paramsBig) } else { $out.Save($ms, $jpeg, $params) }; $out.Dispose()",
   "    [Console]::Out.WriteLine('F ' + $ow + ' ' + $oh + ' ' + [Convert]::ToBase64String($ms.ToArray())); [Console]::Out.Flush()",
   "    $ms.Dispose()",
   "  } catch {",
@@ -167,7 +174,22 @@ export class WindowsCapture implements FrameSource {
     return p;
   }
 
+  /** One request at a time: the live view and a screenshot share the helper. */
+  private queue: Promise<unknown> = Promise.resolve();
+
   grab(): Promise<CaptureResult> {
+    const r = this.queue.then(() => this.ask("g", 4_000));
+    this.queue = r.catch(() => {});
+    return r;
+  }
+
+  shot(): Promise<CaptureResult> {
+    const r = this.queue.then(() => this.ask("s", 15_000));
+    this.queue = r.catch(() => {});
+    return r;
+  }
+
+  private ask(cmd: "g" | "s", timeoutMs: number): Promise<CaptureResult> {
     if (this.failedStarts >= 3) return Promise.resolve({ ok: false, reason: "unavailable", message: "The sim view can't start on this PC (PowerShell didn't run the capture helper)." });
     const p = this.proc ?? this.start();
     return new Promise<CaptureResult>((done) => {
@@ -176,13 +198,13 @@ export class WindowsCapture implements FrameSource {
         // A late answer would be taken for the next frame's: start the helper again instead.
         this.release();
         done({ ok: false, reason: "unavailable", message: "The sim window took too long to capture." });
-      }, this.fresh ? 20_000 : 4_000);
+      }, this.fresh ? 20_000 : timeoutMs);
       this.waiting = (line) => {
         clearTimeout(timer);
         this.fresh = false;
         done(parse(line));
       };
-      p.stdin.write("g\n");
+      p.stdin.write(`${cmd}\n`);
     }).then((r) => {
       if (!r.ok && r.reason === "unavailable" && /stopped|ENOENT/.test(r.message)) this.failedStarts++;
       else if (r.ok) this.failedStarts = 0;
@@ -213,6 +235,9 @@ export function parse(line: string): CaptureResult {
 /** The test flight's picture. */
 export class MockCapture implements FrameSource {
   grab(): Promise<CaptureResult> {
+    return Promise.resolve({ ok: true, ...MOCK_FRAME });
+  }
+  shot(): Promise<CaptureResult> {
     return Promise.resolve({ ok: true, ...MOCK_FRAME });
   }
   release() {}

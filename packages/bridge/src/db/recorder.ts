@@ -1,5 +1,5 @@
 import type { Landing, SimStatus, TelemetryFrame } from "@vbuddy/protocol";
-import type { FlightDb, FlightRow, FlightUpdate, TrackPoint } from "./flight-db.js";
+import type { FlightDb, FlightPlanFields, FlightRow, FlightUpdate, TrackPoint } from "./flight-db.js";
 import type { Logger } from "../log.js";
 
 /** Old frames that a reconnecting client can be given from disk. */
@@ -36,7 +36,20 @@ interface Open {
   maxGs: number;
   dirty: boolean;
   planned: boolean;
+  startLat: number;
+  startLon: number;
+  startedAt: number;
+  /** Furthest the aircraft got from where the flight began, nm (a flight that never moved is hidden when it ends). */
+  maxAwayNm: number;
+  everAirborne: boolean;
 }
+
+const R_NM = 3440.065;
+const rad = Math.PI / 180;
+const distNm = (aLat: number, aLon: number, bLat: number, bLon: number) => {
+  const a = Math.sin(((bLat - aLat) * rad) / 2) ** 2 + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(((bLon - aLon) * rad) / 2) ** 2;
+  return 2 * R_NM * Math.asin(Math.min(1, Math.sqrt(a)));
+};
 
 /**
  * Writes the numbered telemetry stream to the flight database, whether or not
@@ -53,6 +66,13 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
   private flushMs: number;
   private gapMs: number;
   private maxPending: number;
+  /**
+   * With a flight gate (sim/flight-gate.ts) the gate opens and ends flights (begin/finish) and frames are only kept
+   * while it says the aircraft is flying. Without one (tests, the mock), any frame opens a flight as before.
+   */
+  private gated = false;
+  private recording = false;
+  private endCbs: Array<(f: { id: number; hidden: boolean }) => void> = [];
 
   constructor(
     private db: FlightDb,
@@ -80,10 +100,61 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
     if (!s.connected) this.closeFlight();
   }
 
+  /** From now on flights are opened and ended by begin() and finish(), and frames kept only while recording. */
+  useGate() {
+    this.gated = true;
+  }
+
+  /** A flight begins here (the gate says the aircraft has settled at its spawn point). */
+  begin(f: TelemetryFrame) {
+    this.gated = true;
+    this.closeFlight();
+    this.openFlight(f, this.aircraft());
+    this.recording = true;
+  }
+
+  /** Frames are kept (true) or not (false: a replay, a pause, the menu) within the open flight. */
+  setRecording(on: boolean) {
+    this.recording = on;
+  }
+
+  /** The flight is over. */
+  finish() {
+    this.recording = false;
+    this.closeFlight();
+  }
+
+  onFlightEnd(cb: (f: { id: number; hidden: boolean }) => void) {
+    this.endCbs.push(cb);
+  }
+
+  /** The flight being recorded: id (or null while it couldn't be written) and when it began. */
+  current(): { id: number | null; startedAt: number; lat: number; lon: number; airborne: boolean } | null {
+    const c = this.cur;
+    return c ? { id: c.id >= 0 ? c.id : null, startedAt: c.startedAt, lat: c.startLat, lon: c.startLon, airborne: c.everAirborne } : null;
+  }
+
+  /** Ties a SimBrief plan to the open flight. `replace` swaps one tied earlier (a newer plan for the same departure). */
+  setPlan(p: FlightPlanFields, replace = false): boolean {
+    const c = this.cur;
+    if (!c || c.id < 0) return false;
+    try {
+      this.db.setFlightPlan(c.id, p.dep, p.arr, p, replace);
+      c.planned = true;
+      return true;
+    } catch (e) {
+      this.fail("save the flight plan", e);
+      return false;
+    }
+  }
+
   onFrame(f: TelemetryFrame) {
+    if (this.gated) {
+      if (!this.cur || !this.recording) return;
+    }
     const title = this.aircraft();
     const c = this.cur;
-    if (c && (f.ts - c.lastTs > this.gapMs || (title && c.aircraft && title !== c.aircraft))) this.closeFlight();
+    if (!this.gated && c && (f.ts - c.lastTs > this.gapMs || (title && c.aircraft && title !== c.aircraft))) this.closeFlight();
     if (!this.cur) this.openFlight(f, title);
     const o = this.cur!;
     if (!o.aircraft && title) {
@@ -97,6 +168,8 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
     o.lon = f.data.lon;
     o.maxAlt = Math.max(o.maxAlt, f.data.altMsl);
     o.maxGs = Math.max(o.maxGs, f.data.gs);
+    o.maxAwayNm = Math.max(o.maxAwayNm, distNm(o.startLat, o.startLon, f.data.lat, f.data.lon));
+    if (!f.data.onGround && f.data.altAgl > 100) o.everAirborne = true;
     o.dirty = true;
     this.pending.push(f);
     if (this.pending.length > this.maxPending) {
@@ -121,14 +194,47 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
     } catch (e) {
       this.fail("start a flight", e);
     }
-    this.cur = { id, aircraft: title, lastTs: f.ts, firstSeq: f.seq, lastSeq: f.seq, frames: 0, lat: f.data.lat, lon: f.data.lon, maxAlt: f.data.altMsl, maxGs: f.data.gs, dirty: true, planned: false };
+    this.cur = {
+      id,
+      aircraft: title,
+      lastTs: f.ts,
+      firstSeq: f.seq,
+      lastSeq: f.seq,
+      frames: 0,
+      lat: f.data.lat,
+      lon: f.data.lon,
+      maxAlt: f.data.altMsl,
+      maxGs: f.data.gs,
+      dirty: true,
+      planned: false,
+      startLat: f.data.lat,
+      startLon: f.data.lon,
+      startedAt: f.ts,
+      maxAwayNm: 0,
+      everAirborne: false,
+    };
     if (id >= 0) this.lastFlightId = id;
   }
 
   private closeFlight() {
-    if (!this.cur) return;
+    const c = this.cur;
+    if (!c) return;
     this.flush();
     this.cur = null;
+    if (c.id < 0) return;
+    // A "flight" that never left its spot and never flew (loaded, looked around, went back to the menu) isn't kept in the lists.
+    let hidden = false;
+    if (this.gated && !c.everAirborne && c.maxAwayNm < 1) {
+      try {
+        if (this.db.flightLandings(c.id).length === 0) {
+          this.db.hideFlight(c.id);
+          hidden = true;
+        }
+      } catch (e) {
+        this.fail("tidy the flight log", e);
+      }
+    }
+    for (const cb of this.endCbs) cb({ id: c.id, hidden });
   }
 
   /** Flight a landing belongs to: the open one, else the most recent. */
@@ -157,7 +263,7 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
         this.db.insertFrames(this.sessionId, this.pending);
         this.pending = [];
       }
-      if (c && c.id >= 0 && !c.planned) {
+      if (c && c.id >= 0 && !c.planned && !this.gated) {
         const pl = this.plan();
         if (pl) {
           this.db.setFlightPlan(c.id, pl.dep, pl.arr);

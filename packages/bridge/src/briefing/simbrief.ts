@@ -80,12 +80,15 @@ export function mapOfp(j: unknown): MappedOfp | null {
     takeoffWeightKg: kg(weights.est_tow),
     pax: num(weights.pax_count) ?? num(general.passengers),
     units: lbs ? "lbs" : "kg",
+    ofpId: str(params.request_id) ?? str(params.sequence_id) ?? (params.time_generated !== undefined ? `t${str(params.time_generated)}` : null),
   };
 
   const airport = (a: Json, role: AirportBrief["role"]): AirportBrief => ({
     role,
     icao: (str(a.icao_code) ?? "").toUpperCase(),
     name: str(a.name),
+    lat: num(a.pos_lat),
+    lon: num(a.pos_long),
     elevationFt: num(a.elevation),
     plannedRunway: str(a.plan_rwy),
     metar: null,

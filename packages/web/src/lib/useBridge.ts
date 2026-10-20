@@ -9,8 +9,11 @@ function client() {
     const c = shared;
     // The map's track is recorded from the start, whichever tab is open.
     c.subscribe(() => track.setSession(c.getSnapshot().sessionId));
+    c.subscribe(() => track.setFlight(c.getSnapshot().sim?.flight ?? null, c.getSnapshot().sim?.inFlight ?? null));
     c.onFrames((frames) => track.addFrames(frames));
     c.start();
+    // The bridge doesn't push notifications to a device that has the app on screen.
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => c.setVisible(document.visibilityState === "visible"));
   }
   return shared;
 }
@@ -22,6 +25,8 @@ export function useBridgeActions() {
     dismissNewLanding: c.dismissNewLanding,
     dismissAtcAlert: c.dismissAtcAlert,
     dismissFlightAlert: c.dismissFlightAlert,
+    dismissFlightEvent: c.dismissFlightEvent,
+    screenshot: c.screenshot,
     setTrafficArea: c.setTrafficArea,
     command: c.command,
     pair: c.pair,

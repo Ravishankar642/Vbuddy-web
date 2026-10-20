@@ -56,6 +56,12 @@ import { rankLanAddresses } from "./lan.js";
 import { MockCapture, NoCapture, WindowsCapture } from "./simview/capture.js";
 import { ChasePlaneClient, MockChasePlane } from "./chaseplane/client.js";
 import { Updater, windowsLaunch } from "./update/updater.js";
+import { FlightGate } from "./sim/flight-gate.js";
+import { repairFlights } from "./db/repair.js";
+import { PlanTracker, type FlightStart } from "./briefing/plan-tracker.js";
+import { FlightEvents, pausedEvent, planLoadedEvent, simLostEvent, todEvent } from "./alerts/flight-events.js";
+import { Screenshots } from "./simview/screenshots.js";
+import type { FlightEvent } from "@vbuddy/protocol";
 
 const log = logger("bridge");
 
@@ -77,11 +83,30 @@ async function main() {
   }
   const source: SimSource = cfg.mock ? new MockSource({ quick: cfg.mockQuick }) : new SimConnectSource(cfg.simconnect);
   const hub = new TelemetryHub(source, cfg.telemetryHz, cfg.backlogMinutes);
+  // Menu, loading and replays versus really flying: flights, landings and the map trail only count while flying.
+  const gate = new FlightGate();
+  source.onSample((t, at) => gate.sample(t, at));
+  source.onExtras((x) => gate.extras(x));
+  source.onStatus((s) => {
+    gate.setPaused(s.paused);
+    if (!s.connected) gate.simLost(Date.now());
+    else gate.aircraft(s.aircraftTitle, Date.now());
+  });
+  setInterval(() => gate.tick(Date.now()), 2000).unref();
+  const airportDb = new Airports();
 
   // The flight log: telemetry, flights and landings in one SQLite file. If it can't be opened the bridge still runs, just without history.
   const dbFile = cfg.dataDir ? join(cfg.dataDir, "flights.db") : null;
   const db = dbFile ? await FlightDb.open(dbFile, logger("flightlog")) : null;
   if (db && cfg.dataDir) await importLandingsJsonl(join(cfg.dataDir, "landings.jsonl"), db, logger("flightlog"));
+  // Flights recorded by 1.1 and older began in the menu and counted replays as landings: tidied once.
+  if (db) {
+    try {
+      repairFlights(db, logger("flightlog"));
+    } catch (e) {
+      logger("flightlog").warn(`Couldn't tidy the older flights: ${(e as Error).message}`);
+    }
+  }
 
   let recorder: FlightRecorder | null = null;
   let atlas: AtlasService | null = null;
@@ -99,10 +124,11 @@ async function main() {
   };
   if (db && cfg.keepHours > 0) {
     recorder = new FlightRecorder(db, hub.sessionId, cfg.mock ? "mock" : "simconnect", () => source.status().aircraftTitle ?? "", logger("flightlog"), {}, () => briefingRef?.cachedEndpoints() ?? null);
+    recorder.useGate();
     hub.onFrame((f) => recorder!.onFrame(f));
     hub.onStatus((s) => recorder!.onStatus(s));
     hub.setArchive(recorder);
-    atlas = new AtlasService(new Airports(), (id, max) => recorder!.track(id, max), (id, nm) => recorder!.setDistance(id, nm));
+    atlas = new AtlasService(airportDb, (id, max) => recorder!.track(id, max), (id, nm) => recorder!.setDistance(id, nm));
     settleAndPrune();
     recorder.start();
   }
@@ -122,7 +148,15 @@ async function main() {
     aircraftTitle: source.status().aircraftTitle,
     source: cfg.mock ? "mock" : "simconnect",
   }));
-  source.onSample((t, at) => analyzer.ingest(t, at));
+  // Landings only count while flying: a replay of your landing, or the sim settling after a spawn, is not one.
+  source.onSample((t, at) => {
+    if (gate.inFlight()) analyzer.ingest(t, at);
+  });
+  gate.on((e) => {
+    // Back to flying after the menu, a replay or a move: the sim reports odd values for a moment.
+    if (e.kind === "flying" && e.flying && e.reason === "flying") analyzer.spawn();
+    if (e.kind === "start") analyzer.spawn();
+  });
   source.onExtras((x) => analyzer.setExtras(x));
   let lastTitle = "";
   // Updates (as Cobalt's bridge: 6-hourly, downloads wait while the simulator is connected).
@@ -235,10 +269,26 @@ async function main() {
     );
   };
   let lastSample: { t: Telemetry; at: number } | null = null;
+  // Milestones of the flight (takeoff, top of climb, 10,000 ft, near the destination, at the gate).
+  const events = new FlightEvents();
+  const flightEventCbs: Array<(e: FlightEvent) => void> = [];
+  let todSaid = false;
+  const fireEvent = (e: FlightEvent) => {
+    log.info(`Flight: ${e.title}. ${e.text}`);
+    for (const cb of flightEventCbs) cb(e);
+    void push?.notifyEvent(e);
+  };
   source.onSample((t, at) => {
     lastSample = { t, at: Date.now() };
     if (at - lastFlightAt < 500) return;
     lastFlightAt = at;
+    if (!gate.inFlight()) return;
+    for (const e of events.update(t, simExtras, at)) fireEvent(e);
+    if (push) void push.notifyApproach(events.destMinAway, events.destNm, planTracker?.current()?.arr ?? null);
+    if (!todSaid && flight.todMinAway !== null && flight.todNm !== null && flight.todMinAway <= 5 && !t.onGround) {
+      todSaid = true;
+      for (const cb of flightEventCbs) cb(todEvent(flight.todMinAway, flight.todNm));
+    }
     // The aircraft's own autopilot (the Fenix) counts, as it does in the live data.
     const own = !t.ap.master && hub.apOverrideOn();
     for (const a of flight.update(own ? { ...t, ap: { ...t.ap, master: true } } : t, simExtras, at)) {
@@ -304,7 +354,10 @@ async function main() {
     },
     todMin: () => flight.todMinAway,
     paused: () => source.status().paused,
-    pause: () => panelBackend.sys("pause", 1),
+    pause: () => {
+      fireEvent(pausedEvent("VBuddy paused the simulator as you asked."));
+      return panelBackend.sys("pause", 1);
+    },
   });
   panel.attachPauseScheduler(pauser);
   setInterval(() => pauser.tick(), 500).unref();
@@ -321,10 +374,103 @@ async function main() {
   const integrations = new IntegrationStore(cfg.dataDir ? join(cfg.dataDir, "integrations.json") : null);
   const briefing = new BriefingService((url, init) => fetch(url, init), () => integrations.get().simbrief);
   briefingRef = briefing;
-  // Keep the plan's route fresh, so a flight can be tied to the plan that was filled in when it began.
   void briefing.endpoints().catch(() => {});
-  const planTimer = setInterval(() => void briefing.endpoints().catch(() => {}), 120_000);
-  planTimer.unref();
+
+  // The SimBrief plan for the flight in progress: loaded when you connect to VATSIM and when a flight begins,
+  // tied to the flight record when its departure is where the flight began, drawn on the map, shown in the app.
+  // The test flight gets a pretend plan from Mumbai to Dubai (the way it flies), so the plan can be seen without SimBrief.
+  const mockPlan = {
+    plan: async () => ({
+      ofp: { airline: "VBD", flightNumber: "1", callsign: process.env.VBUDDY_MOCK_CALLSIGN || "BAW123", aircraft: "A20N", route: "BBB4A BUSBO UL425 TAPDO UM551 DOH2", distanceNm: 1050, eteMin: 175, cruiseFt: 37000, departAt: null, generatedAt: null, blockFuelKg: 9800, tripFuelKg: 7600, zeroFuelWeightKg: 58000, takeoffWeightKg: 67000, pax: 160, units: "kg" as const, ofpId: "mock-1" },
+      airports: [
+        { role: "origin" as const, icao: "VABB", name: "Mumbai", lat: 19.0887, lon: 72.8679, elevationFt: 39, plannedRunway: "27", metar: null, taf: null, weatherError: null },
+        { role: "destination" as const, icao: "OMDB", name: "Dubai", lat: 25.2528, lon: 55.3644, elevationFt: 62, plannedRunway: "30R", metar: null, taf: null, weatherError: null },
+      ],
+      fixes: [
+        { ident: "BUSBO", lat: 19.6, lon: 70.5, altFt: 24000, via: null },
+        { ident: "TAPDO", lat: 21.4, lon: 65.9, altFt: 37000, via: "UL425" },
+        { ident: "TOD", lat: 24.0, lon: 58.6, altFt: 37000, via: null },
+        { ident: "OMDB", lat: 25.2528, lon: 55.3644, altFt: 62, via: null },
+      ],
+    }),
+  };
+  const planTracker = new PlanTracker(cfg.mock ? mockPlan : briefing, logger("plan"), (icao) => airportDb.get(icao));
+  const flightStart = (): FlightStart | null => gateStart;
+  let gateStart: FlightStart | null = null;
+  let trackSince: number | null = null;
+  const publishFlight = () => {
+    const c = recorder?.current() ?? null;
+    const n = comms.state().net;
+    // The trail starts once spawned and connected to VATSIM (or right away when vPilot isn't linked to VBuddy).
+    if (gate.flightOpen() && gate.inFlight() && (n.connected || !n.pluginLinked) && trackSince === null) trackSince = Date.now();
+    hub.patchStatus({ inFlight: gate.inFlight(), flight: gate.flightOpen() ? { id: c?.id ?? null, startedAt: c?.startedAt ?? Date.now(), trackSince } : null });
+  };
+  planTracker.onChange((p, why) => {
+    if (p) {
+      const arrFix = p.fixes[p.fixes.length - 1];
+      events.setPlan({ arr: p.arr, arrLat: arrFix?.ident === p.arr ? arrFix.lat : (airportDb.get(p.arr)?.lat ?? null), arrLon: arrFix?.ident === p.arr ? arrFix.lon : (airportDb.get(p.arr)?.lon ?? null), cruiseFt: p.cruiseFt });
+      void loadTodPlan().catch(() => {});
+    } else events.setPlan(null);
+    const c = recorder?.current();
+    if (p && p.matched && c) recorder!.setPlan({ dep: p.dep, arr: p.arr, callsign: p.callsign, route: p.route, distanceNm: p.distanceNm, eteMin: p.eteMin, ofpId: p.ofpId }, !c.airborne);
+    if (p && why === "vatsim") fireEvent(planLoadedEvent(p));
+  });
+  gate.on((e) => {
+    if (e.kind === "start") {
+      gateStart = { lat: e.t.lat, lon: e.t.lon, airborne: !e.t.onGround };
+      trackSince = null;
+      todSaid = false;
+      events.reset();
+      flight.reset();
+      recorder?.begin({ seq: hub.latestSeq() + 1, ts: e.at, data: e.t });
+      void planTracker.refresh("flight-start", gateStart, false);
+    } else if (e.kind === "flying") recorder?.setRecording(e.flying);
+    else if (e.kind === "end") {
+      const airborne = !!lastSample && !lastSample.t.onGround;
+      recorder?.finish();
+      trackSince = null;
+      gateStart = null;
+      if (e.reason === "sim-lost") fireEvent(simLostEvent(airborne));
+    }
+    publishFlight();
+  });
+  // Connected to VATSIM: load the SimBrief plan again (the one you just filed).
+  let netWas = comms.state().net.connected;
+  comms.onState(() => {
+    const n = comms.state().net;
+    if (n.connected && !netWas) void planTracker.refresh("vatsim", flightStart(), true);
+    netWas = n.connected;
+    publishFlight();
+  });
+  // A plan made after spawning still counts, until the wheels leave the ground.
+  const planCheck = setInterval(() => {
+    const c = recorder?.current();
+    if (gate.flightOpen() && (!c || !c.airborne)) void planTracker.refresh("timer", flightStart(), false);
+  }, 120_000);
+  planCheck.unref();
+  void planTracker.refresh("start", null, false);
+  // Notifications only for devices still paired.
+  if (push && pairing) {
+    push.keepOnly(pairing.devicesList().map((d) => d.id));
+    pairing.onChange(() => push!.keepOnly(pairing!.devicesList().map((d) => d.id)));
+  }
+  // Cloud and rain layers from OpenWeatherMap, fetched by this PC so the key never leaves it.
+  const wxCache = new Map<string, { at: number; buf: Buffer }>();
+  const weatherTile = async (layer: string, z: number, x: number, y: number): Promise<Buffer | null> => {
+    const key = integrations.get().owm;
+    if (!key || z > 12) return null;
+    const k = `${layer}/${z}/${x}/${y}`;
+    const hit = wxCache.get(k);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.buf;
+    const r = await fetch(`https://tile.openweathermap.org/map/${layer}_new/${z}/${x}/${y}.png?appid=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(10_000) });
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (wxCache.size > 600) wxCache.delete(wxCache.keys().next().value!);
+    wxCache.set(k, { at: Date.now(), buf });
+    return buf;
+  };
+  const simViewSource = cfg.mock ? new MockCapture() : process.platform === "win32" ? new WindowsCapture(logger("simview")) : new NoCapture();
+  const screenshots = new Screenshots(simViewSource, cfg.dataDir ? join(cfg.dataDir, "screenshots") : null, logger("screenshot"));
 
   const acars = new HoppieService(
     (url, init) => fetch(url, init),
@@ -358,7 +504,7 @@ async function main() {
         access: cfg.relayAccess,
         error: relayOn ? relayClient.lastError : "",
       },
-      accounts: { simbrief: integrations.get().simbrief, hoppieSet: integrations.get().hoppie !== "" },
+      accounts: { simbrief: integrations.get().simbrief, hoppieSet: integrations.get().hoppie !== "", owmSet: integrations.get().owm !== "" },
       dataDir: cfg.dataDir,
       host: { autostart: autostartState(), plugin: pluginState(), canReconnect: source instanceof SimConnectSource },
       pause: pauser.status(),
@@ -376,7 +522,7 @@ async function main() {
     } else if (action === "newCode") {
       pairing?.rotate();
     } else if (action === "integrations") {
-      const err = integrations.set({ simbrief: body.simbrief, hoppie: body.hoppie });
+      const err = integrations.set({ simbrief: body.simbrief, hoppie: body.hoppie, owm: body.owm });
       acars.changed();
       return err ?? undefined;
     } else if (action === "forget" && typeof body.id === "string") {
@@ -407,7 +553,7 @@ async function main() {
   };
 
   try {
-    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: cfg.mock ? new MockCapture() : process.platform === "win32" ? new WindowsCapture(logger("simview")) : new NoCapture(), network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir });
+    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EADDRINUSE") log.error(`Port ${cfg.port} is already in use. Is another bridge running? Use --port to pick another.`);

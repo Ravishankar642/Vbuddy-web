@@ -145,7 +145,15 @@ function FlightDetail({ f, onBack }: { f: SavedFlight; onBack: () => void }) {
     ["Highest", `${int(f.maxAltFt)} ft`],
     ["Fastest ground speed", `${int(f.maxGsKt)} kt`],
     ["Landings", String(f.landings)],
-    ["Atlas", f.onPlan ? "Logged" : "Not logged (no matching SimBrief plan)"],
+    ...(f.planDep && f.planArr
+      ? ([
+          ["SimBrief plan", `${f.planCallsign ? f.planCallsign + " · " : ""}${f.planDep} → ${f.planArr}`],
+          ...(f.planDistanceNm ? ([["Planned distance", `${int(f.planDistanceNm)} nm${f.distanceNm ? ` (flown ${int(f.distanceNm)} nm)` : ""}`]] as Array<[string, string]>) : []),
+          ...(f.planEteMin ? ([["Planned time", `${duration(f.planEteMin * 60_000)} (took ${duration(f.endedAt - f.startedAt)})`]] as Array<[string, string]>) : []),
+          ...(f.planRoute ? ([["Route", f.planRoute]] as Array<[string, string]>) : []),
+        ] as Array<[string, string]>)
+      : []),
+    ["Atlas", f.onPlan ? "Logged" : f.planDep ? `Not logged (flown ${f.from?.icao ?? "?"} → ${f.to?.icao ?? "?"}, planned ${f.planDep} → ${f.planArr})` : "Not logged (no SimBrief plan for this flight)"],
   ];
   return (
     <>
@@ -193,7 +201,9 @@ function FlightRow({ f, onOpen }: { f: SavedFlight; onOpen: () => void }) {
             {day(f.startedAt)} · {duration(f.endedAt - f.startedAt)}
             {f.aircraft ? ` · ${f.aircraft}` : ""}
           </small>
-          <small className={f.onPlan ? "fl__tag fl__tag--on" : "fl__tag"}>{f.onPlan ? "Logged in Atlas" : "Not logged: not flown on a SimBrief plan"}</small>
+          <small className={f.onPlan ? "fl__tag fl__tag--on" : "fl__tag"}>
+            {f.onPlan ? `On plan${f.planCallsign ? ` ${f.planCallsign}` : ""} · logged in Atlas` : f.planDep ? `Not on its plan (${f.planDep} → ${f.planArr})` : "No SimBrief plan"}
+          </small>
         </div>
         <div className="ms__flightR">
           <span>{f.distanceNm ? `${int(f.distanceNm)} nm` : `${int(f.maxAltFt)} ft`}</span>

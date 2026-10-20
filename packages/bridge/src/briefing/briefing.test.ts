@@ -160,7 +160,7 @@ test("briefing: SimBrief says no plan / is unreachable / weather is down", async
 test("integrations: validates, saves privately, reloads, changes only what is sent", () => {
   const file = join(mkdtempSync(join(tmpdir(), "vb-int-")), "integrations.json");
   const s = new IntegrationStore(file);
-  assert.deepEqual(s.get(), { simbrief: "", hoppie: "" });
+  assert.deepEqual(s.get(), { simbrief: "", hoppie: "", owm: "" });
   assert.equal(s.set({ simbrief: "  jsmith " }), null);
   assert.equal(s.set({ hoppie: "AbC123xyz9" }), null);
   assert.ok(s.set({ simbrief: "bad/name?" })!.includes("SimBrief"));

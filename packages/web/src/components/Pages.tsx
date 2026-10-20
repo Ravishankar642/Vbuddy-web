@@ -2,7 +2,7 @@ import { CduView } from "./CduView";
 import { useEffect, useState, type ReactNode } from "react";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
-import { setThemePref, useTheme, type ThemePref } from "../lib/theme";
+import { setThemePref, useAirlineTheme, useTheme, type ThemePref } from "../lib/theme";
 import { int } from "../lib/format";
 import { AtcCard, NetworkChip } from "./AtcCard";
 import { AppCard } from "./AppCard";
@@ -148,9 +148,10 @@ const THEMES: Array<[ThemePref, string]> = [
   ["dark", "Dark"],
 ];
 /** Settings and notifications, behind the round button at the top right of the sheet. */
-export function MeTab({ b }: { b: BridgeSnapshot }) {
+export function MeTab({ b, openAlerts }: { b: BridgeSnapshot; openAlerts: () => void }) {
   const theme = useTheme();
-  const now = b.latest ? Date.now() - b.latest.ts : null;
+  const airline = useAirlineTheme();
+  const now = b.latest ? Date.now() - b.latestAt : null;
   const control = b.control;
   return (
     <>
@@ -158,11 +159,19 @@ export function MeTab({ b }: { b: BridgeSnapshot }) {
       <section className="card">
         <h2 className="card__title">Appearance</h2>
         <Segments<ThemePref> value={theme.pref} onChange={setThemePref} items={THEMES} />
+        <label className="sw" style={{ marginTop: 12 }}>
+          <span className="sw__text">
+            <b>Airline colours</b>
+            <small>{airline.airline ? `Now: ${airline.airline.name}.` : "When you connect to VATSIM with an airline callsign (QTR123, IGO45…), the app takes on its colours."}</small>
+          </span>
+          <input type="checkbox" role="switch" checked={airline.on} onChange={(e) => airline.set(e.target.checked)} />
+          <i aria-hidden />
+        </label>
         <p className="muted ms__clock">
           Zulu time <ZuluClock />
         </p>
       </section>
-      {!control?.locked && <NotifyCard b={b} />}
+      {!control?.locked && <NotifyCard b={b} open={openAlerts} />}
       <AppCard />
       <section className="card">
         <h2 className="card__title">Map credits</h2>

@@ -9,6 +9,9 @@ import { AtlasTab, FlightsTab, MeTab, SystemsTab } from "./components/Pages";
 import { Shell, type Tab } from "./components/Shell";
 import { Tile } from "./components/ui";
 import { FlightHero } from "./components/Hero";
+import { FlightPlate } from "./components/FlightPlate";
+import { NotificationsPage, usePushResync } from "./components/NotifyCard";
+import { setThemeCallsign } from "./lib/theme";
 import { BriefView } from "./components/BriefView";
 import { RatingBadge } from "./components/LandingView";
 import { onAttention, useBridge, useBridgeActions, useNow } from "./lib/useBridge";
@@ -64,9 +67,9 @@ function Instruments({ t, aircraft, fcu }: { t: Telemetry; aircraft: string; fcu
   );
 }
 
-const OLD_HASHES: Record<string, Tab> = { flight: "flights", map: "flights", cockpit: "systems", comms: "inbox", brief: "search", landing: "atlas" };
-const TAB_IDS: Tab[] = ["flights", "systems", "inbox", "atlas", "search", "me"];
-const TITLES: Record<Tab, string> = { flights: "Flights", systems: "Systems", inbox: "Inbox", atlas: "Atlas", search: "Search", me: "Settings" };
+const OLD_HASHES: Record<string, Tab> = { flight: "flights", map: "flights", cockpit: "systems", inbox: "comms", brief: "search", landing: "atlas", notifications: "alerts" };
+const TAB_IDS: Tab[] = ["flights", "systems", "comms", "atlas", "search", "me", "alerts"];
+const TITLES: Record<Tab, string> = { flights: "Flights", systems: "Systems", comms: "Comms", atlas: "Atlas", search: "Search", me: "Settings", alerts: "Notifications" };
 const tabFromHash = (): Tab => {
   const h = window.location.hash.slice(1).split("/")[0] ?? "";
   return (TAB_IDS as string[]).includes(h) ? (h as Tab) : (OLD_HASHES[h] ?? "flights");
@@ -84,16 +87,17 @@ function useTab(): [Tab, (t: Tab) => void] {
 }
 
 const TOAST_MS = 30_000;
+const EVENT_TOAST_MS = 12_000;
 const ATC_TOAST_MS = 25_000;
 const FLIGHT_ALERT_MS = 30_000;
 
 export function App() {
   const b = useBridge();
-  const { dismissNewLanding, dismissAtcAlert, dismissFlightAlert, dismissAttention } = useBridgeActions();
+  const { dismissNewLanding, dismissAtcAlert, dismissFlightAlert, dismissFlightEvent, dismissAttention } = useBridgeActions();
   const [tab, setTab] = useTab();
   const now = useNow(500);
   const t = b.latest?.data ?? null;
-  const age = b.latest ? now - b.latest.ts : Infinity;
+  const age = b.latest ? now - b.latestAt : Infinity;
 
   // A landing that happens while you're on the Flight tab (or while the tablet was offline) gets a toast.
   const toast = tab === "flights" ? b.newLanding : null;
@@ -121,7 +125,20 @@ export function App() {
       /* not supported */
     }
   }, [b.attentionUnread]);
-  const msgToast = tab === "inbox" ? null : b.lastAttention;
+  const msgToast = tab === "comms" ? null : b.lastAttention;
+
+  // The app takes on the colours of the airline you're connected to VATSIM as.
+  usePushResync(b);
+  const vatsimCallsign = b.comms?.net.connected ? b.comms.net.callsign : null;
+  useEffect(() => setThemeCallsign(vatsimCallsign), [vatsimCallsign]);
+
+  // Takeoff, top of climb, the plan loaded and so on: a short note.
+  const flightEvent = b.flightEvent;
+  useEffect(() => {
+    if (!flightEvent) return;
+    const id = setTimeout(dismissFlightEvent, EVENT_TOAST_MS);
+    return () => clearTimeout(id);
+  }, [flightEvent, dismissFlightEvent]);
   useEffect(() => {
     if (!msgToast) return;
     const id = setTimeout(dismissAttention, 15_000);
@@ -162,6 +179,20 @@ export function App() {
           </button>
         </div>
       )}
+      {flightEvent && (
+        <div className={`toast toast--event${flightEvent.kind === "simLost" ? " toast--warning" : ""}`} role="status" aria-live="polite">
+          <span className="toast__icon" aria-hidden="true">
+            {flightEvent.kind === "takeoff" ? "↗" : flightEvent.kind === "gate" ? "■" : flightEvent.kind === "planLoaded" ? "☰" : flightEvent.kind === "simLost" ? "⚠" : "•"}
+          </span>
+          <span className="toast__text">
+            <b>{flightEvent.title}</b>
+            <span>{flightEvent.text}</span>
+          </span>
+          <button type="button" className="btn btn--ghost" aria-label="Dismiss" onClick={dismissFlightEvent}>
+            ✕
+          </button>
+        </div>
+      )}
       {atcAlert && (
         <div className="toast toast--atc" role="status" aria-live="polite">
           <span className="toast__icon" aria-hidden="true">
@@ -185,7 +216,7 @@ export function App() {
             <b>{msgToast.kind === "private" ? `Message from ${msgToast.from}` : msgToast.from}</b>
             <span>{msgToast.text.length > 90 ? msgToast.text.slice(0, 90) + "…" : msgToast.text}</span>
           </span>
-          <button type="button" className="btn btn--primary" onClick={() => { dismissAttention(); setTab("inbox"); }}>
+          <button type="button" className="btn btn--primary" onClick={() => { dismissAttention(); setTab("comms"); }}>
             Open
           </button>
           <button type="button" className="btn btn--ghost" aria-label="Dismiss" onClick={dismissAttention}>
@@ -213,6 +244,7 @@ export function App() {
 
   const live = t ? (
     <div className={age > 3000 ? "stale" : undefined}>
+      <FlightPlate b={b} />
       <Instruments t={t} aircraft={b.sim?.aircraftTitle ?? ""} fcu={b.cockpit} />
       <AtcCard b={b} compact />
     </div>
@@ -232,14 +264,16 @@ export function App() {
         <FlightsTab b={b} live={live} />
       ) : tab === "systems" ? (
         <SystemsTab b={b} />
-      ) : tab === "inbox" ? (
+      ) : tab === "comms" ? (
         <CommsView b={b} />
       ) : tab === "atlas" ? (
         <AtlasTab b={b} />
       ) : tab === "search" ? (
         <BriefView />
+      ) : tab === "alerts" ? (
+        <NotificationsPage b={b} />
       ) : (
-        <MeTab b={b} />
+        <MeTab b={b} openAlerts={() => setTab("alerts")} />
       )}
     </Shell>
   );

@@ -6,6 +6,32 @@ import type { BridgeSnapshot } from "../lib/bridge-client";
 import { useBridgeActions } from "../lib/useBridge";
 import { apiFetch } from "../lib/api";
 import { track, type TrackPoint } from "../lib/track";
+
+/** Weather on the map: off, rain radar, or rain radar plus clouds. */
+export type WeatherMode = "off" | "rain" | "clouds";
+
+/** A tile layer whose tiles come from the bridge's API (through the relay they need the pairing token). */
+const AuthTileLayer = L.TileLayer.extend({
+  createTile(this: L.TileLayer, coords: L.Coords, done: L.DoneCallback) {
+    const img = document.createElement("img");
+    img.alt = "";
+    void apiFetch(this.getTileUrl(coords))
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!b) return done(undefined, img);
+        img.onload = () => {
+          URL.revokeObjectURL(img.src);
+          done(undefined, img);
+        };
+        img.onerror = () => done(undefined, img);
+        img.src = URL.createObjectURL(b);
+      })
+      .catch((e: Error) => done(e, img));
+    return img;
+  },
+}) as unknown as new (url: string, o: L.TileLayerOptions) => L.TileLayer;
+
+const RAINVIEWER = "https://api.rainviewer.com/public/weather-maps.json";
 import { hdg, int } from "../lib/format";
 import { mapBus } from "../lib/mapbus";
 import type { MapStyle } from "../lib/mapstyle";
@@ -109,9 +135,10 @@ export interface MapViewProps {
   /** Pixels at the bottom/left of the map that the sheet covers, so the aircraft is centred in what is left. */
   inset: { bottom: number; left: number };
   mapStyle: MapStyle;
+  weather?: WeatherMode;
 }
 
-export default function MapView({ b, follow, onFollow, showTraffic, showSectors, inset, mapStyle }: MapViewProps) {
+export default function MapView({ b, follow, onFollow, showTraffic, showSectors, inset, mapStyle, weather = "off" }: MapViewProps) {
   const { setTrafficArea } = useBridgeActions();
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -184,6 +211,9 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
     baseLayer.current = L.tileLayer(tiles.base, { attribution: TILE_ATTR, maxNativeZoom: tiles.native, maxZoom: 18 }).addTo(map);
     // Place names above the aircraft-free ground, below markers.
     map.createPane("basemapLabels").style.zIndex = "250";
+    // Rain and clouds: over the ground, under the place names and everything else.
+    map.createPane("weather").style.zIndex = "240";
+    map.getPane("weather")!.style.pointerEvents = "none";
     labelLayer.current = L.tileLayer(tiles.labels, { pane: "basemapLabels", maxNativeZoom: tiles.native, maxZoom: 18, opacity: 0.95 }).addTo(map);
 
     const layers: Layers = {
@@ -237,8 +267,56 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
   }, [sendArea]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (b.sessionId) void track.loadHistory(b.sessionId);
+    if (b.sessionId) void track.loadSessionHistory(b.sessionId);
   }, [b.sessionId]);
+
+  /* ---- the SimBrief route of the flight in progress ---- */
+  const planKey = b.plan ? `${b.plan.ofpId}:${b.plan.fixes.length}:${b.plan.matched}` : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    const p = b.plan;
+    if (!map || !p || p.fixes.length < 2) return;
+    const pts = p.fixes.map((f) => [f.lat, f.lon] as [number, number]);
+    const ends = (at: [number, number], icao: string) =>
+      L.marker(at, { icon: L.divIcon({ className: "plan-end", html: `<span>${icao}</span>`, iconSize: [0, 0] }), interactive: false, keyboard: false });
+    const g = L.layerGroup([
+      L.polyline(pts, { className: `plan-line${p.matched ? "" : " plan-line--other"}`, weight: 3, opacity: 0.9, interactive: false, dashArray: "8 7" }),
+      ends(pts[0]!, p.dep),
+      ends(pts[pts.length - 1]!, p.arr),
+    ]).addTo(map);
+    return () => {
+      g.remove();
+    };
+  }, [planKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ---- weather: RainViewer radar (no key), and clouds from OpenWeatherMap through the bridge ---- */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || weather === "off") return;
+    let cancelled = false;
+    let radar: L.TileLayer | null = null;
+    const loadRadar = async () => {
+      try {
+        const j = (await (await fetch(RAINVIEWER)).json()) as { host?: string; radar?: { past?: Array<{ path: string }> } };
+        const last = j.radar?.past?.[j.radar.past.length - 1];
+        if (cancelled || !j.host || !last) return;
+        const url = `${j.host}${last.path}/256/{z}/{x}/{y}/2/1_1.png`;
+        if (radar) radar.setUrl(url);
+        else radar = L.tileLayer(url, { pane: "weather", opacity: 0.75, maxNativeZoom: 7, maxZoom: 18, attribution: '<a href="https://www.rainviewer.com/">RainViewer</a>' }).addTo(map);
+      } catch {
+        /* radar unavailable for now: the next refresh tries again */
+      }
+    };
+    void loadRadar();
+    const timer = window.setInterval(() => void loadRadar(), 10 * 60_000);
+    const clouds = weather === "clouds" ? new AuthTileLayer("/api/weather/clouds/{z}/{x}/{y}.png", { pane: "weather", opacity: 0.85, maxNativeZoom: 9, maxZoom: 18, attribution: '<a href="https://openweathermap.org/">OpenWeatherMap</a>' }).addTo(map) : null;
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      radar?.remove();
+      clouds?.remove();
+    };
+  }, [weather]);
 
   /* ---- own aircraft ---- */
   const t = b.latest?.data;

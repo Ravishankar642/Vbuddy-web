@@ -46,7 +46,7 @@ export class MockSource implements SimSource {
   private phaseT = 0;
   private loop = 0;
   private t!: Telemetry;
-  private extras: SimExtras = { ...EMPTY_EXTRAS, touchdownNormalVelFps: 0, windKt: 8, windFromDeg: 300, fuelLbs: 24000, engineCount: 2, eng1: 1, eng2: 1, stallWarning: 0, overspeedWarning: 0 };
+  private extras: SimExtras = { ...EMPTY_EXTRAS, cameraState: 2, simRunning: 1, touchdownNormalVelFps: 0, windKt: 8, windFromDeg: 300, fuelLbs: 24000, engineCount: 2, eng1: 1, eng2: 1, stallWarning: 0, overspeedWarning: 0 };
 
   constructor(private opts: MockOptions = {}) {
     this.reset();
