@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
 import { MAP_STYLES, useMapStyle } from "../lib/mapstyle";
-import { Grab, useAppHeight, useSheet, WIDE_PANEL_PX } from "./Sheet";
+import { Grab, useAppHeight, usePullDown, useSheet, WIDE_PANEL_PX } from "./Sheet";
 import { IconAtlas, IconBell, IconBroadcast, IconChip, IconClose, IconFlight, IconGlobe, IconInbox, IconLayers, IconLocate, IconRain, IconRefresh, IconSearch } from "./icons";
 import type { WeatherMode } from "./MapView";
 import { apiFetch } from "../lib/api";
@@ -56,6 +56,8 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
   const rootRef = useRef<HTMLDivElement>(null);
   const appHeight = useAppHeight();
   const sheet = useSheet(rootRef);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  usePullDown(bodyRef, sheet);
   const [mapStyle, cycleMapStyle] = useMapStyle();
   const [follow, setFollow] = useState(true);
   const [traffic, setTraffic] = useState(true);
@@ -170,7 +172,9 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
             </header>
           )}
         </Grab>
-        <div className="ms__body">{children}</div>
+        <div className="ms__body" ref={bodyRef}>
+          {children}
+        </div>
         <nav className="ms__tabs" aria-label="Sections">
           <div className="ms__tabPill">
             {TABS.map(([k, label, Icon]) => (

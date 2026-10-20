@@ -1019,3 +1019,6 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .ms__over { top: calc(max(12px, env(safe-area-inset-top)) + 136px); }
 .lf__head.has-photo .lf__cs { font-size: 26px; }
 .lf__head.has-photo .lf__chip { font-size: 13px; padding: 1px 6px; }
+/* a taller grab area at the top of the sheet (there's no title above the Flights page) */
+.ms__grab { padding-top: 12px; padding-bottom: 10px; }
+.ms__body { overscroll-behavior-y: contain; }
