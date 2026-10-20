@@ -4,6 +4,9 @@ import { airlineOf } from "../lib/airlines";
 import { apiFetch } from "../lib/api";
 import { int } from "../lib/format";
 
+/** Public airline-logo images by IATA code, tried in order after the PC's own logos folder. */
+const LOGO_SOURCES = [(iata: string) => `https://img.wway.io/pics/root/${iata}@png?exar=1&rs=fit:192:192`, (iata: string) => `https://pics.avs.io/192/192/${iata}.png`];
+
 /** Logos found in VBuddy's data folder on the PC (logos\QTR.png), by ICAO code. null = there isn't one. */
 const logos = new Map<string, string | null>();
 function useLogo(icao: string | null): string | null {
@@ -39,13 +42,17 @@ export function FlightPlate({ b }: { b: BridgeSnapshot }) {
   const plan = b.plan;
   const shownCallsign = callsign ?? plan?.callsign ?? null;
   const a = airlineOf(shownCallsign);
-  const logo = useLogo(a?.icao ?? null);
+  const ownLogo = useLogo(a?.icao ?? null);
+  // The PC's own logo first, then the public logo images; the airline's code in its colour if none loads.
+  const sources = [...(ownLogo ? [ownLogo] : []), ...(a ? LOGO_SOURCES.map((f) => f(a.iata)) : [])];
+  const [failed, setFailed] = useState<string[]>([]);
+  const logo = sources.find((u) => !failed.includes(u)) ?? null;
   if (!shownCallsign && !plan) return null;
   const left = plan && b.latest && plan.fixes.length ? remainingNm(plan.fixes, b.latest.data.lat, b.latest.data.lon) : null;
   return (
     <section className="plate" aria-label="Your flight">
       <div className="plate__mark" aria-hidden={!!logo}>
-        {logo ? <img src={logo} alt={a ? `${a.name} logo` : ""} /> : <span>{a?.iata ?? shownCallsign?.slice(0, 3) ?? "—"}</span>}
+        {logo ? <img src={logo} alt={a ? `${a.name} logo` : ""} referrerPolicy="no-referrer" onError={() => setFailed((f) => [...f, logo])} /> : <span>{a?.iata ?? shownCallsign?.slice(0, 3) ?? "—"}</span>}
       </div>
       <div className="plate__who">
         <b>{a?.name ?? "Your flight"}</b>
