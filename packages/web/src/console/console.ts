@@ -265,7 +265,7 @@ $<HTMLButtonElement>("qrRelay").onclick = () => {
 
 /* ---- sidebar pages ---- */
 type Page = "connect" | "map" | "flights" | "systems" | "efb" | "atlas" | "activity" | "settings";
-const FRAME_HASH: Partial<Record<Page, string>> = { map: "flights/live", flights: "flights/mine", systems: "systems", efb: "systems/efb", atlas: "atlas" };
+const FRAME_HASH: Partial<Record<Page, string>> = { map: "flights/live", flights: "atlas/mine", systems: "systems", efb: "systems/efb", atlas: "atlas/overview" };
 let page: Page = "connect";
 let frame: HTMLIFrameElement | null = null;
 

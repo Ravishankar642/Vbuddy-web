@@ -205,6 +205,8 @@ async function main() {
     });
     network = new NetworkService(feed, null, nLog, cfg.callsign);
     hub.onFrame((f) => network!.setOwn(f.data));
+    // The registration filed in your VATSIM flight plan's remarks (REG/A7BCE), for the Live page's aircraft photo.
+    network.onUpdate(() => hub.patchStatus({ vatsimReg: network!.ownReg() ?? undefined }));
     hub.onStatus((s) => {
       if (!s.connected) network!.setOwn(null);
     });
@@ -273,8 +275,13 @@ async function main() {
   const events = new FlightEvents();
   const flightEventCbs: Array<(e: FlightEvent) => void> = [];
   let todSaid = false;
+  let takeoffAt: number | null = null;
   const fireEvent = (e: FlightEvent) => {
     log.info(`Flight: ${e.title}. ${e.text}`);
+    if (e.kind === "takeoff") {
+      takeoffAt = Date.now();
+      publishFlight();
+    }
     for (const cb of flightEventCbs) cb(e);
     void push?.notifyEvent(e);
   };
@@ -403,7 +410,7 @@ async function main() {
     const n = comms.state().net;
     // The trail starts once spawned and connected to VATSIM (or right away when vPilot isn't linked to VBuddy).
     if (gate.flightOpen() && gate.inFlight() && (n.connected || !n.pluginLinked) && trackSince === null) trackSince = Date.now();
-    hub.patchStatus({ inFlight: gate.inFlight(), flight: gate.flightOpen() ? { id: c?.id ?? null, startedAt: c?.startedAt ?? Date.now(), trackSince } : null });
+    hub.patchStatus({ inFlight: gate.inFlight(), flight: gate.flightOpen() ? { id: c?.id ?? null, startedAt: c?.startedAt ?? Date.now(), trackSince, takeoffAt } : null });
   };
   planTracker.onChange((p, why) => {
     if (p) {
@@ -419,6 +426,7 @@ async function main() {
     if (e.kind === "start") {
       gateStart = { lat: e.t.lat, lon: e.t.lon, airborne: !e.t.onGround };
       trackSince = null;
+      takeoffAt = null;
       todSaid = false;
       events.reset();
       flight.reset();

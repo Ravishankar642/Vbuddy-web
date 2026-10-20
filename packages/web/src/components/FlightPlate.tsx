@@ -5,11 +5,11 @@ import { apiFetch } from "../lib/api";
 import { int } from "../lib/format";
 
 /** Public airline-logo images by IATA code, tried in order after the PC's own logos folder. */
-const LOGO_SOURCES = [(iata: string) => `https://img.wway.io/pics/root/${iata}@png?exar=1&rs=fit:192:192`, (iata: string) => `https://pics.avs.io/192/192/${iata}.png`];
+export const LOGO_SOURCES = [(iata: string) => `https://img.wway.io/pics/root/${iata}@png?exar=1&rs=fit:192:192`, (iata: string) => `https://pics.avs.io/192/192/${iata}.png`];
 
 /** Logos found in VBuddy's data folder on the PC (logos\QTR.png), by ICAO code. null = there isn't one. */
 const logos = new Map<string, string | null>();
-function useLogo(icao: string | null): string | null {
+export function useLogo(icao: string | null): string | null {
   const [url, setUrl] = useState<string | null>(icao ? (logos.get(icao) ?? null) : null);
   useEffect(() => {
     if (!icao) return setUrl(null);
@@ -86,7 +86,7 @@ const dist = (aLat: number, aLon: number, bLat: number, bLon: number) => {
   return 2 * R_NM * Math.asin(Math.min(1, Math.sqrt(x)));
 };
 /** Along the route from the nearest fix ahead to the end. */
-function remainingNm(fixes: Array<{ lat: number; lon: number }>, lat: number, lon: number): number {
+export function remainingNm(fixes: Array<{ lat: number; lon: number }>, lat: number, lon: number): number {
   let best = 0;
   let bestD = Infinity;
   fixes.forEach((f, i) => {

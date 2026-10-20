@@ -141,6 +141,12 @@ export class NetworkService implements NetworkHub {
   stations() {
     return this.stationList;
   }
+  /** The registration you filed in your VATSIM flight plan's remarks (REG/...), once you've been found in the feed. */
+  ownReg(): string | null {
+    const me = this.you ? this.snap?.pilots.find((p) => p.callsign === this.you) : undefined;
+    return me?.reg ?? null;
+  }
+
   position() {
     return this.watcher.position();
   }

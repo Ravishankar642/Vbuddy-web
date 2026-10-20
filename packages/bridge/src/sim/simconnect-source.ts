@@ -17,6 +17,18 @@ const DEF_TELEMETRY = 1;
 const DEF_TITLE = 2;
 const REQ_TELEMETRY = 1;
 const REQ_TITLE = 2;
+// The aircraft's registration and type, as the Live page shows them.
+const DEF_IDENT = 20;
+const REQ_IDENT = 20;
+
+/** MSFS answers ATC MODEL with a text key ("TT:ATCCOM.AC_MODEL_B788.0.text") for most aircraft: keep the type in it. */
+export function cleanModel(raw: string): string {
+  const s = raw.trim();
+  const m = /AC_MODEL[ _]([A-Z0-9]{2,5})/i.exec(s);
+  if (m) return m[1]!.toUpperCase();
+  if (/^TT:|\.text$/i.test(s)) return "";
+  return /^[A-Z0-9]{2,5}$/i.test(s) ? s.toUpperCase() : s.slice(0, 12);
+}
 // One definition + request per extra variable, so a name the sim rejects only
 // loses that one value instead of shifting the layout of the others.
 const EXTRAS = [
@@ -235,6 +247,9 @@ export class SimConnectSource implements SimSource {
 
     for (const [name, unit] of VARS) handle.addToDataDefinition(DEF_TELEMETRY, name, unit, SimConnectDataType.FLOAT64);
     handle.addToDataDefinition(DEF_TITLE, "TITLE", null, SimConnectDataType.STRING256);
+    handle.addToDataDefinition(DEF_IDENT, "ATC ID", null, SimConnectDataType.STRING32);
+    handle.addToDataDefinition(DEF_IDENT, "ATC MODEL", null, SimConnectDataType.STRING64);
+    handle.requestDataOnSimObject(REQ_IDENT, DEF_IDENT, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
 
     handle.requestDataOnSimObject(REQ_TELEMETRY, DEF_TELEMETRY, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME);
     handle.requestDataOnSimObject(
@@ -276,6 +291,14 @@ export class SimConnectSource implements SimSource {
         }
         const now = Date.now();
         for (const cb of this.sampleCbs) cb(t, now);
+      } else if (r.requestID === REQ_IDENT) {
+        try {
+          const atcId = r.data.readString32().trim();
+          const atcModel = cleanModel(r.data.readString64());
+          if (atcId !== this.st.atcId || atcModel !== this.st.atcModel) this.setStatus({ atcId, atcModel });
+        } catch {
+          /* an aircraft without them */
+        }
       } else if (r.requestID === REQ_TITLE) {
         const title = r.data.readString256().trim();
         if (title !== this.st.aircraftTitle) log.info(`Aircraft: ${title || "(none)"}`);

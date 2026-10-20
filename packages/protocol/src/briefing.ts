@@ -61,6 +61,8 @@ export interface OfpSummary {
   units: "kg" | "lbs";
   /** SimBrief's id for this plan (changes with every new plan). */
   ofpId?: string | null;
+  /** The aircraft's registration in the plan. */
+  reg?: string | null;
 }
 
 export interface RouteFix {

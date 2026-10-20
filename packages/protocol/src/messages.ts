@@ -263,6 +263,11 @@ export const FlightPlanMsgSchema = z.object({
       callsign: z.string().nullable(),
       dep: z.string(),
       arr: z.string(),
+      /** The airports' names as SimBrief gives them. */
+      depName: z.string().nullable().optional(),
+      arrName: z.string().nullable().optional(),
+      /** The aircraft registration in the SimBrief plan. */
+      reg: z.string().nullable().optional(),
       route: z.string().nullable(),
       distanceNm: z.number().nullable(),
       eteMin: z.number().nullable(),

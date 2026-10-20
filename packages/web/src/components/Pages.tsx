@@ -27,7 +27,7 @@ export function Segments<T extends string>({ value, onChange, items, pills }: { 
   );
 }
 
-function Traffic({ b }: { b: BridgeSnapshot }) {
+export function Traffic({ b }: { b: BridgeSnapshot }) {
   const t = b.latest?.data;
   const rad = Math.PI / 180;
   const away = (p: { lat: number; lon: number; distNm: number }) => {
@@ -137,9 +137,51 @@ export function SystemsTab({ b }: { b: BridgeSnapshot }) {
   );
 }
 
-/** Atlas: your logbook at a glance, then every landing. */
+type LogSeg = "overview" | "mine";
+const logFromHash = (): LogSeg => {
+  const [tab, seg] = window.location.hash.slice(1).split("/");
+  return seg === "mine" || (tab === "flights" && seg === "mine") ? "mine" : "overview";
+};
+/** Logbook: your record at a glance and every landing, and the flights you've flown and plan to fly. */
 export function AtlasTab({ b }: { b: BridgeSnapshot }) {
-  return <AtlasPage b={b} />;
+  const [seg, setSeg] = useState<LogSeg>(logFromHash);
+  useEffect(() => {
+    const on = () => window.location.hash.startsWith("#atlas") && setSeg(logFromHash());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return (
+    <>
+      <Segments<LogSeg>
+        value={seg}
+        onChange={setSeg}
+        items={[
+          ["overview", "Overview"],
+          ["mine", "My flights"],
+        ]}
+      />
+      {seg === "mine" ? <MyFlights b={b} /> : <AtlasPage b={b} />}
+    </>
+  );
+}
+
+type CommsSeg = "radio" | "traffic";
+/** Comms: radios, messages and ACARS, and the network traffic and ATC around you. */
+export function CommsTab({ b, comms }: { b: BridgeSnapshot; comms: ReactNode }) {
+  const [seg, setSeg] = useState<CommsSeg>(() => (window.location.hash.split("/")[1] === "traffic" ? "traffic" : "radio"));
+  return (
+    <>
+      <Segments<CommsSeg>
+        value={seg}
+        onChange={setSeg}
+        items={[
+          ["radio", "Radio and messages"],
+          ["traffic", "Traffic"],
+        ]}
+      />
+      {seg === "traffic" ? <Traffic b={b} /> : comms}
+    </>
+  );
 }
 
 const THEMES: Array<[ThemePref, string]> = [

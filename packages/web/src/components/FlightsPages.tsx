@@ -153,7 +153,7 @@ function FlightDetail({ f, onBack }: { f: SavedFlight; onBack: () => void }) {
           ...(f.planRoute ? ([["Route", f.planRoute]] as Array<[string, string]>) : []),
         ] as Array<[string, string]>)
       : []),
-    ["Atlas", f.onPlan ? "Logged" : f.planDep ? `Not logged (flown ${f.from?.icao ?? "?"} → ${f.to?.icao ?? "?"}, planned ${f.planDep} → ${f.planArr})` : "Not logged (no SimBrief plan for this flight)"],
+    ["Logbook", f.onPlan ? "Logged" : f.planDep ? `Not logged (flown ${f.from?.icao ?? "?"} → ${f.to?.icao ?? "?"}, planned ${f.planDep} → ${f.planArr})` : "Not logged (no SimBrief plan for this flight)"],
   ];
   return (
     <>
@@ -202,7 +202,7 @@ function FlightRow({ f, onOpen }: { f: SavedFlight; onOpen: () => void }) {
             {f.aircraft ? ` · ${f.aircraft}` : ""}
           </small>
           <small className={f.onPlan ? "fl__tag fl__tag--on" : "fl__tag"}>
-            {f.onPlan ? `On plan${f.planCallsign ? ` ${f.planCallsign}` : ""} · logged in Atlas` : f.planDep ? `Not on its plan (${f.planDep} → ${f.planArr})` : "No SimBrief plan"}
+            {f.onPlan ? `On plan${f.planCallsign ? ` ${f.planCallsign}` : ""} · in your logbook` : f.planDep ? `Not on its plan (${f.planDep} → ${f.planArr})` : "No SimBrief plan"}
           </small>
         </div>
         <div className="ms__flightR">
@@ -282,7 +282,7 @@ export function AtlasPage({ b }: { b: BridgeSnapshot }) {
   return (
     <>
       <section className="ms__atlas">
-        <small>VBuddy Atlas</small>
+        <small>VBuddy Logbook</small>
         <h2>Flight record</h2>
       </section>
       <dl className="ms__stats ms__stats--6">

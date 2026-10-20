@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- **Flights shows only your flight**, with nothing above it. My flights moved to the Logbook (the new name for Atlas), Traffic to Comms. Settings and notifications are round buttons floating at the top left of the map.
+- **A photo of your aircraft**, as on a flight tracker: by registration from Planespotters.net (from REG/ in your VATSIM remarks, then SimBrief, then the sim), with the photographer's credit. Without a registration, or when it belongs to another airline, a photo of your airline's aircraft of that type from Wikimedia Commons. The aircraft row shows the type's full name (Boeing 787-8 Dreamliner).
+- **The Live page is laid out like a flight tracker's flight card:** callsign with flight number and type, airline and logo; departure and arrival with a progress bar, time since takeoff and time to arrival; altitude and ground speed; the aircraft and its registration (from the sim); then sections that open and close: more information, altitude and vertical speed, speed, wind and temperature, airspace (ATC now and next), autopilot and aircraft, and the data source with squawk and position.
+
 ## 1.2.0
 
 - **Flights start when you've spawned, not in the menu.** VBuddy now knows the simulator's menu, hangar, loading screen and replays from flying (the camera state, the "Sim" event, MSFS's placeholder positions, and a position that doesn't move at speed). A flight starts once the aircraft has settled where it was put; a jump of more than 20 nm starts a new one. Replays no longer count as landings and no longer move the end of the flight, and a "flight" that never went anywhere is left out of the list.

@@ -11,6 +11,8 @@ export interface RawPilot {
   type?: string;
   dep?: string;
   arr?: string;
+  /** The registration from the flight plan's remarks ("REG/A7BCE"), if the pilot filed one. */
+  reg?: string;
 }
 export interface RawController {
   callsign: string;
@@ -63,6 +65,7 @@ export function parseVatsimFeed(json: unknown): FeedSnapshot {
       ...(fp && str(fp.aircraft_short) ? { type: str(fp.aircraft_short) } : {}),
       ...(fp && str(fp.departure) ? { dep: str(fp.departure) } : {}),
       ...(fp && str(fp.arrival) ? { arr: str(fp.arrival) } : {}),
+      ...(fp && /\bREG\/([A-Z0-9-]{3,10})\b/i.test(str(fp.remarks)) ? { reg: /\bREG\/([A-Z0-9-]{3,10})\b/i.exec(str(fp.remarks))![1]!.toUpperCase() } : {}),
     });
   }
 

@@ -80,6 +80,7 @@ export function mapOfp(j: unknown): MappedOfp | null {
     takeoffWeightKg: kg(weights.est_tow),
     pax: num(weights.pax_count) ?? num(general.passengers),
     units: lbs ? "lbs" : "kg",
+    reg: str(aircraft.reg),
     ofpId: str(params.request_id) ?? str(params.sequence_id) ?? (params.time_generated !== undefined ? `t${str(params.time_generated)}` : null),
   };
 

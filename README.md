@@ -44,16 +44,21 @@ Prefer to stay on your own network? Use the Local edition, or a private VPN such
 
 | Tab | What you get |
 |---|---|
-| **Flights** | Live instruments with your airline and SimBrief plan, your saved flights, and nearby VATSIM traffic and ATC |
+| **Flights** | Your flight in progress, laid out like a flight tracker: callsign, airline, aircraft photo, route and progress, then altitude, speed, wind, airspace, autopilot and more |
 | **Systems** | Engines, autopilot, fuel, electrical, cabin and weather; **Controls** (FCU/MCP, lights, simulator buttons); **Sim view**; **CDU** (PMDG); **Fenix EFB** (Fenix) |
-| **Comms** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC) |
-| **Atlas** | Your flight record and every landing |
+| **Comms** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC); **Traffic**: nearby VATSIM pilots and ATC |
+| **Logbook** | Your flight record and every landing; **My flights**: flights flown and planned |
 | Search | Airport weather and your SimBrief flight plan |
 
 The map shows your aircraft with VATSIM traffic, ATC sectors and airports, and warns you before you cross into a new controller's airspace. Your SimBrief route is drawn as a dashed line, and your own trail starts once you've spawned at the airport and connected to VATSIM. The **rain** button adds a weather radar (RainViewer); tap it again for **clouds** too, which needs a free [OpenWeatherMap](https://openweathermap.org/api) key pasted into the VBuddy window under *Your accounts*.
 
 ### Your flight and SimBrief
 When you connect to VATSIM, VBuddy loads your latest SimBrief plan by itself (your SimBrief name goes in the VBuddy window). If the plan starts at the airport where you spawned, it's tied to the flight: the route goes on the map, the Live page shows the flight number and distance to go, and the flight record keeps the plan, planned against flown. A flight only starts once the aircraft has settled at its spawn point, so time in the menu, the hangar, loading or watching a replay isn't recorded and replays don't count as landings.
+
+### Aircraft photo
+The Live page shows a photo of your aircraft, found by its registration: the one in your VATSIM flight plan's remarks (`REG/A7BCE`), then the one in your SimBrief plan, then the one the aircraft has in the sim. Photos come from [Planespotters.net](https://www.planespotters.net) with the photographer's name; tap it to see the photo there. If there's no registration, or it belongs to another airline, you get a photo of your airline's aircraft of the same type from Wikimedia Commons instead.
+
+Settings (round **V** button) and Notifications (bell) float at the top left of the map.
 
 ### Airline colours
 Connect to VATSIM with an airline callsign (QTR123, IGO6E45, UAE202…) and the app takes on that airline's colours, in light and dark mode, with a nameplate on the Live page. About 260 airlines are known, with their logos (loaded from a public airline-logo service); switch the colours off under Settings → Appearance. To use your own logo instead, put an image named after the airline's ICAO code (`QTR.png`, `IGO.svg`…) in `%APPDATA%\VBuddy\logos`. If no logo loads, the nameplate shows the airline's code in its colour.

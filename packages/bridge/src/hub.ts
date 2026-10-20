@@ -31,7 +31,7 @@ export class TelemetryHub {
   private archive: FrameArchive | null = null;
   /** True when the aircraft's own autopilot is on although the simulator's standard flag says off (the Fenix keeps its own). */
   private apOverride: (() => boolean) | null = null;
-  private extra: Pick<SimStatus, "inFlight" | "flight"> = {};
+  private extra: Pick<SimStatus, "inFlight" | "flight" | "vatsimReg"> = {};
 
   constructor(
     private source: SimSource,
@@ -86,7 +86,7 @@ export class TelemetryHub {
   }
 
   /** Adds to the status the clients see; sent to them when it changes. */
-  patchStatus(p: Pick<SimStatus, "inFlight" | "flight">) {
+  patchStatus(p: Pick<SimStatus, "inFlight" | "flight" | "vatsimReg">) {
     const next = { ...this.extra, ...p };
     if (JSON.stringify(next) === JSON.stringify(this.extra)) return;
     this.extra = next;

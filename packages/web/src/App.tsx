@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
-import type { FcuState, Telemetry } from "@vbuddy/protocol";
 import { UpdateBanner } from "./components/AppCard";
-import { AtcCard } from "./components/AtcCard";
 import { PairThisDevice } from "./components/Cockpit";
 import { CommsView } from "./components/CommsView";
 import { playChime, unlockAudioOnFirstTouch } from "./lib/chime";
-import { AtlasTab, FlightsTab, MeTab, SystemsTab } from "./components/Pages";
+import { AtlasTab, CommsTab, MeTab, SystemsTab } from "./components/Pages";
 import { Shell, type Tab } from "./components/Shell";
-import { Tile } from "./components/ui";
-import { FlightHero } from "./components/Hero";
-import { FlightPlate } from "./components/FlightPlate";
+import { LiveFlight } from "./components/LiveFlight";
 import { NotificationsPage, usePushResync } from "./components/NotifyCard";
 import { setThemeCallsign } from "./lib/theme";
 import { BriefView } from "./components/BriefView";
@@ -17,61 +13,15 @@ import { RatingBadge } from "./components/LandingView";
 import { onAttention, useBridge, useBridgeActions, useNow } from "./lib/useBridge";
 import { ago, coord, fixed, hdg, int, signed, signed1 } from "./lib/format";
 
-/**
- * The sim's generic "autopilot master" is not driven by every add-on (the Fenix keeps its own), so when the aircraft's
- * own FCU is known its AP lights count too.
- */
-function apState(t: Telemetry, fcu: FcuState | null): { on: boolean; text: string } {
-  const l = fcu?.lights;
-  if (l && (l.ap1 || l.ap2)) return { on: true, text: `Autopilot ${l.ap1 && l.ap2 ? "AP1 + AP2" : l.ap1 ? "AP1" : "AP2"}` };
-  return t.ap.master ? { on: true, text: "Autopilot on" } : { on: false, text: "Autopilot off" };
-}
-
-function Instruments({ t, aircraft, fcu }: { t: Telemetry; aircraft: string; fcu: FcuState | null }) {
-  const ap = apState(t, fcu);
-  return (
-    <>
-      <FlightHero t={t} aircraft={aircraft} />
-      <div className="chips" aria-label="Aircraft state">
-        <span className={`chip-st${t.gearDown ? " is-on" : ""}`}><i />Gear {t.gearDown ? "down" : "up"}</span>
-        <span className={`chip-st${t.flapsIndex > 0 ? " is-on" : ""}`}><i />Flaps {t.flapsIndex}</span>
-        <span className={`chip-st${t.parkingBrake ? " is-warn" : ""}`}><i />Parking brake {t.parkingBrake ? "on" : "off"}</span>
-        <span className={`chip-st${ap.on ? " is-on" : ""}`}><i />{ap.text}</span>
-        {fcu && <span className={`chip-st${fcu.lights.athr ? " is-on" : ""}`}><i />Autothrust {fcu.lights.athr ? "on" : "off"}</span>}
-        {t.simRate !== 1 && <span className="chip-st is-warn"><i />Sim rate ×{t.simRate}</span>}
-      </div>
-      <h2 className="sec">Autopilot selected</h2>
-      <div className="mcp-strip">
-        {fcu && fcu.power ? (
-          <>
-            <div className="mcp-strip__cell"><small>Speed{fcu.spdManaged ? " (managed)" : ""}</small><b>{fcu.spdDashed ? "---" : fcu.spdIsMach ? fcu.spd.toFixed(2) : int(fcu.spd)}</b></div>
-            <div className="mcp-strip__cell"><small>Heading{fcu.hdgManaged ? " (managed)" : ""}</small><b>{fcu.hdgDashed ? "---" : hdg(fcu.hdg)}</b></div>
-            <div className="mcp-strip__cell"><small>Altitude{fcu.altManaged ? " (managed)" : ""}</small><b>{int(fcu.alt)}</b></div>
-            <div className="mcp-strip__cell"><small>{fcu.trkFpa ? "Flight path angle" : "Vertical speed"}</small><b>{fcu.vsDashed ? "---" : fcu.trkFpa ? signed1(fcu.vs / 1000) : signed(fcu.vs)}</b></div>
-          </>
-        ) : (
-          <>
-            <div className="mcp-strip__cell"><small>Speed</small><b>{int(t.ap.spdSel)}</b></div>
-            <div className="mcp-strip__cell"><small>Heading</small><b>{hdg(t.ap.hdgSel)}</b></div>
-            <div className="mcp-strip__cell"><small>Altitude</small><b>{int(t.ap.altSel)}</b></div>
-            <div className="mcp-strip__cell"><small>Vertical speed</small><b>{signed(t.ap.vsSel)}</b></div>
-          </>
-        )}
-      </div>
-      <div className="grid" style={{ marginTop: 12 }}>
-        <Tile label="Attitude" value={<>{signed(t.pitch)}° <span className="sep">/</span> {signed(t.bank)}°</>} sub="pitch / bank" />
-        <Tile label="G load" value={fixed(t.gForce, 2)} unit="g" tone={t.gForce > 1.6 || t.gForce < 0.4 ? "warn" : undefined} />
-        <Tile label="Position" value={<span className="coord">{coord(t.lat, true)}<br />{coord(t.lon, false)}</span>} sub={`Ground ${int(t.groundElev)} ft`} />
-      </div>
-    </>
-  );
-}
-
 const OLD_HASHES: Record<string, Tab> = { flight: "flights", map: "flights", cockpit: "systems", inbox: "comms", brief: "search", landing: "atlas", notifications: "alerts" };
 const TAB_IDS: Tab[] = ["flights", "systems", "comms", "atlas", "search", "me", "alerts"];
-const TITLES: Record<Tab, string> = { flights: "Flights", systems: "Systems", comms: "Comms", atlas: "Atlas", search: "Search", me: "Settings", alerts: "Notifications" };
+const TITLES: Record<Tab, string> = { flights: "Flights", systems: "Systems", comms: "Comms", atlas: "Logbook", search: "Search", me: "Settings", alerts: "Notifications" };
 const tabFromHash = (): Tab => {
-  const h = window.location.hash.slice(1).split("/")[0] ?? "";
+  const [h = "", seg] = window.location.hash.slice(1).split("/");
+  // My flights and Traffic used to be pages of the Flights tab.
+  if (h === "flights" && seg === "mine") return "atlas";
+  if (h === "flights" && seg === "traffic") return "comms";
+  if (h === "logbook") return "atlas";
   return (TAB_IDS as string[]).includes(h) ? (h as Tab) : (OLD_HASHES[h] ?? "flights");
 };
 
@@ -244,9 +194,7 @@ export function App() {
 
   const live = t ? (
     <div className={age > 3000 ? "stale" : undefined}>
-      <FlightPlate b={b} />
-      <Instruments t={t} aircraft={b.sim?.aircraftTitle ?? ""} fcu={b.cockpit} />
-      <AtcCard b={b} compact />
+      <LiveFlight b={b} t={t} now={now} />
     </div>
   ) : (
     <div className="empty">
@@ -261,11 +209,11 @@ export function App() {
       {b.control?.locked ? (
         <PairThisDevice gate />
       ) : tab === "flights" ? (
-        <FlightsTab b={b} live={live} />
+        live
       ) : tab === "systems" ? (
         <SystemsTab b={b} />
       ) : tab === "comms" ? (
-        <CommsView b={b} />
+        <CommsTab b={b} comms={<CommsView b={b} />} />
       ) : tab === "atlas" ? (
         <AtlasTab b={b} />
       ) : tab === "search" ? (

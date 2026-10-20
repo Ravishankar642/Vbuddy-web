@@ -943,3 +943,79 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 
 .toast--event { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .toast--event .toast__text { flex: 1; }
+
+/* ---------------------------------------------------------------- Live page: a flight tracker's flight card */
+.lf { display: grid; gap: 8px; margin-bottom: 8px; }
+.lf__head { display: flex; align-items: center; gap: 12px; padding: 14px 14px 14px 16px; border-radius: 18px 18px 6px 6px; color: #fff; background: radial-gradient(120% 160% at 100% 0%, var(--brand-hi) 0%, transparent 55%), linear-gradient(120deg, var(--brand-deep), var(--brand)); }
+.lf__who { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.lf__id { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.lf__cs { font: 700 30px/1 var(--num); letter-spacing: 0.03em; color: color-mix(in srgb, var(--brand-hi) 30%, #fff); }
+.lf__chip { padding: 2px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.18); font: 700 15px var(--num); letter-spacing: 0.05em; }
+.lf__chip--type { background: rgba(255, 255, 255, 0.32); }
+.lf__airline { font-size: 16px; font-weight: 600; opacity: 0.92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf__logo { flex: none; width: 66px; height: 66px; border-radius: 14px; background: #fff; display: grid; place-items: center; overflow: hidden; box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.5); }
+.lf__logo img { width: 100%; height: 100%; object-fit: contain; padding: 6px; }
+.lf__logo span { font: 700 24px var(--num); color: var(--brand); letter-spacing: 0.04em; }
+
+.lf__main { display: grid; grid-template-columns: minmax(0, 1fr) 128px; gap: 8px; }
+.lf__route, .lf__side .lf__cell, .lf__strip, .lf__grid .lf__cell { background: var(--well); border: 1px solid var(--edge); }
+.lf__route { border-radius: 6px; padding: 14px 14px 12px; display: grid; gap: 10px; align-content: space-between; }
+.lf__ends { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; }
+.lf__apt { display: grid; min-width: 0; }
+.lf__apt b { font: 700 34px/1 var(--num); letter-spacing: 0.03em; }
+.lf__apt small { font-size: 12.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lf__apt--r { text-align: right; }
+.lf__plane { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--panel); border: 1px solid var(--edge); color: var(--accent); }
+.lf__plane svg { width: 22px; height: 22px; transform: rotate(45deg) translateY(2px); }
+.lf__plane.is-air svg { transform: rotate(45deg); }
+.lf__prog { height: 6px; border-radius: 99px; background: var(--raised-2); overflow: hidden; }
+.lf__prog i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s; }
+.lf__times { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.lf__side { display: grid; gap: 8px; }
+.lf__side .lf__cell { border-radius: 6px; }
+
+.lf__cell { display: grid; align-content: center; gap: 1px; padding: 10px 12px; min-width: 0; }
+.lf__cell small { font-size: 11.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.lf__cell b { font: 600 24px/1.1 var(--num); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.lf__cell b i { font: 600 14px var(--ui); font-style: normal; color: var(--muted); }
+.lf__cell span { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf__cell.is-warn b { color: var(--bad); }
+
+.lf__strip { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 12px 14px; border-radius: 6px; font-size: 16px; font-weight: 600; }
+.lf__strip > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf__strip small { font-size: 11.5px; font-weight: 700; color: var(--muted); letter-spacing: 0.05em; }
+.lf__note { margin: 0; padding: 8px 12px; border-radius: 6px; font-size: 13px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--well)); }
+
+.lf__sec { border-radius: 6px; overflow: hidden; }
+.lf__bar { appearance: none; width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 0; cursor: pointer; color: #fff; text-align: left; background: linear-gradient(90deg, var(--brand), color-mix(in srgb, var(--brand) 82%, var(--brand-hi))); font: 700 16.5px var(--ui); }
+.lf__bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lf__barIcon svg { width: 26px; height: 26px; display: block; }
+.lf__barTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lf__chev { width: 24px; height: 24px; flex: none; transition: transform 0.2s; transform: rotate(-90deg); }
+.lf__sec.is-open .lf__chev { transform: rotate(0deg); }
+.lf__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--edge); border: 1px solid var(--edge); border-top: 0; }
+.lf__grid .lf__cell { border: 0; border-radius: 0; padding: 12px 14px; }
+@media (max-width: 360px) { .lf__main { grid-template-columns: 1fr; } .lf__side { grid-template-columns: 1fr 1fr; } .lf__apt b { font-size: 28px; } }
+@media (min-width: 900px) { .lf__grid { grid-template-columns: repeat(4, 1fr); } }
+.lf__times span:last-child { text-align: right; }
+/* the header with the aircraft photo on the right, like a flight tracker */
+.lf__head.has-photo { padding: 0 0 0 16px; overflow: hidden; min-height: 92px; align-items: stretch; }
+.lf__head.has-photo .lf__who { align-self: center; padding: 12px 0; }
+.lf__photo { position: relative; flex: none; width: 44%; max-width: 230px; display: block; background: #000; }
+.lf__photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lf__credit { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 8px; font-size: 11px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, 0.7)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lf__airline { display: flex; align-items: center; gap: 8px; }
+.lf__mini { flex: none; width: 22px; height: 22px; border-radius: 6px; background: #fff; object-fit: contain; padding: 2px; }
+.lf__mini--code { display: grid; place-items: center; font: 700 11px var(--num); font-style: normal; color: var(--brand); }
+/* settings and notifications: floating under the bridge pill */
+.ms__topL { display: grid; gap: 10px; justify-items: start; pointer-events: none; }
+.ms__topL > * { pointer-events: auto; }
+.ms__me { display: flex; gap: 10px; }
+.ms__me .ms__avatar { width: 54px; height: 54px; box-shadow: var(--shadow); }
+.ms__me .ms__avatar.is-on { background: var(--glass); color: var(--text); }
+.ms__me .ms__bell { width: 54px; height: 54px; background: var(--glass); backdrop-filter: blur(18px) saturate(1.4); box-shadow: var(--shadow); }
+.ms__me .ms__bell svg { width: 24px; height: 24px; }
+.ms__head:empty { display: none; }
+.ms__over { top: calc(max(12px, env(safe-area-inset-top)) + 136px); }
+.lf__head.has-photo .lf__cs { font-size: 26px; }
+.lf__head.has-photo .lf__chip { font-size: 13px; padding: 1px 6px; }

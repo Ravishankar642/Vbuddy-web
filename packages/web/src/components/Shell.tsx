@@ -14,7 +14,7 @@ const TABS: Array<[Exclude<Tab, "search" | "me" | "alerts">, string, () => Retur
   ["flights", "Flights", IconFlight],
   ["systems", "Systems", IconChip],
   ["comms", "Comms", IconInbox],
-  ["atlas", "Atlas", IconAtlas],
+  ["atlas", "Logbook", IconAtlas],
 ];
 
 const WEATHER_KEY = "vbuddy.map.weather";
@@ -107,6 +107,7 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
       </div>
 
       <div className="ms__top">
+        <div className="ms__topL">
         <button type="button" className="ms__pill" onClick={st.retry ? () => window.location.reload() : undefined} aria-label={`${st.head}. ${st.sub}`}>
           <i className={`ms__dot ms__dot--${st.tone}`} />
           <span className="ms__pillText">
@@ -117,6 +118,18 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
           </span>
           {st.retry && <IconRefresh />}
         </button>
+        {/* Settings and notifications float over the map, so the sheet has nothing above the page itself. */}
+        <div className="ms__me">
+          <button type="button" className={`ms__avatar${tab === "me" ? " is-on" : ""}`} onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings"} title="Settings">
+            {tab === "me" ? <IconClose /> : "V"}
+            {!locked && b.link === "open" && tab !== "me" && <i />}
+          </button>
+          <button type="button" className={`ms__bell${tab === "alerts" ? " is-on" : ""}`} onClick={() => setTab(tab === "alerts" ? "flights" : "alerts")} aria-label={tab === "alerts" ? "Close notifications" : "Notifications"} title="Notifications">
+            {tab === "alerts" ? <IconClose /> : <IconBell />}
+            {b.push && !b.push.subscribed && b.control?.reason === "paired" && tab !== "alerts" && <i />}
+          </button>
+        </div>
+        </div>
         <div className="ms__fabs">
           <button type="button" className="ms__fab" onClick={cycleMapStyle} aria-label={`Map style: ${styleLabel}. Tap to change.`} title={`Map style: ${styleLabel}`}>
             <IconGlobe />
@@ -148,20 +161,14 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
 
       <section className={`ms__sheet${sheet.drag !== null ? " is-dragging" : ""}`} style={sheet.wide ? undefined : { height: sheet.height }} aria-label={title}>
         <Grab s={sheet}>
-          <header className="ms__head">
-            <div className="ms__headL">{left}</div>
-            <h1>{title}</h1>
-            <div className="ms__headR">
-            <button type="button" className={`ms__bell${tab === "alerts" ? " is-on" : ""}`} onClick={() => setTab(tab === "alerts" ? "flights" : "alerts")} aria-label={tab === "alerts" ? "Close notifications" : "Notifications"} title="Notifications">
-              {tab === "alerts" ? <IconClose /> : <IconBell />}
-              {b.push && !b.push.subscribed && b.control?.reason === "paired" && tab !== "alerts" && <i />}
-            </button>
-            <button type="button" className="ms__avatar" onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings"}>
-              {tab === "me" ? <IconClose /> : "V"}
-              {!locked && b.link === "open" && tab !== "me" && <i />}
-            </button>
-            </div>
-          </header>
+          {/* The Flights tab is just the flight: no title above it. */}
+          {tab !== "flights" && (
+            <header className="ms__head">
+              <div className="ms__headL">{left}</div>
+              <h1>{title}</h1>
+              <div />
+            </header>
+          )}
         </Grab>
         <div className="ms__body">{children}</div>
         <nav className="ms__tabs" aria-label="Sections">

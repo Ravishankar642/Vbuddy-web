@@ -73,6 +73,12 @@ export const SimStatusSchema = z.object({
    * replay. Only then are flights recorded, landings counted and the map trail drawn. Absent from older bridges.
    */
   inFlight: z.boolean().optional(),
+  /** The aircraft's registration as the sim has it (ATC ID, e.g. "A7-BCE"). */
+  atcId: z.string().optional(),
+  /** The registration filed in your VATSIM flight plan's remarks (REG/...), while connected. */
+  vatsimReg: z.string().optional(),
+  /** The aircraft's ICAO type as the sim has it (ATC MODEL, e.g. "B788"). */
+  atcModel: z.string().optional(),
   /** The flight being recorded, while there is one. */
   flight: z
     .object({
@@ -81,6 +87,8 @@ export const SimStatusSchema = z.object({
       startedAt: z.number(),
       /** The map trail is drawn from this time on: spawned and, when vPilot is linked, connected to VATSIM. Null = not yet. */
       trackSince: z.number().nullable(),
+      /** Wheels up (PC clock), once the aircraft has taken off on this flight. */
+      takeoffAt: z.number().nullable().optional(),
     })
     .nullable()
     .optional(),
