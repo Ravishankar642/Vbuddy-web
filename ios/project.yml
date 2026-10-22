@@ -1,0 +1,38 @@
+# XcodeGen spec for the VBuddy iPhone/iPad app. `xcodegen generate` (macOS) turns this into VBuddy.xcodeproj.
+# The GitHub workflow .github/workflows/ios.yml does that and builds an unsigned .ipa for SideStore to sign.
+name: VBuddy
+options:
+  bundleIdPrefix: app.vbuddy
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "1.2.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+targets:
+  VBuddy:
+    type: application
+    platform: iOS
+    sources:
+      - path: VBuddy
+        excludes:
+          - "Info.plist"
+          - "vbuddy-ios.js"
+      - path: VBuddy/vbuddy-ios.js
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: VBuddy
+        PRODUCT_BUNDLE_IDENTIFIER: app.vbuddy.companion
+        INFOPLIST_FILE: VBuddy/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_BITCODE: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""

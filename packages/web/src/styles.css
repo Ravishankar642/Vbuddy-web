@@ -1022,3 +1022,5 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 /* a taller grab area at the top of the sheet (there's no title above the Flights page) */
 .ms__grab { padding-top: 12px; padding-bottom: 10px; }
 .ms__body { overscroll-behavior-y: contain; }
+/* an odd last box spans the row instead of leaving a gap */
+@media (max-width: 899px) { .lf__grid > .lf__cell:last-child:nth-child(odd) { grid-column: span 2; } }

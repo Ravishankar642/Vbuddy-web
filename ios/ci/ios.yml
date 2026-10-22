@@ -1,0 +1,68 @@
+# Builds the VBuddy iPhone app as an unsigned .ipa (SideStore signs it with your Apple ID when it installs it)
+# and, for a published release, attaches it and the SideStore source to that release.
+# Run it by hand from the Actions tab ("Run workflow"), or it runs by itself when you publish a release.
+name: iPhone app
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: v
+        run: |
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Make the Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project VBuddy.xcodeproj -target VBuddy -configuration Release -sdk iphoneos \
+            MARKETING_VERSION="${{ steps.v.outputs.version }}" CURRENT_PROJECT_VERSION="${{ steps.v.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            SYMROOT="$PWD/build" build | tail -n 60
+
+      - name: Package the .ipa
+        run: |
+          mkdir -p out/Payload
+          cp -R ios/build/Release-iphoneos/VBuddy.app out/Payload/
+          cd out && zip -qry "VBuddy-${{ steps.v.outputs.version }}.ipa" Payload && rm -rf Payload
+          ls -l
+
+      - name: SideStore source
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -n "$TAG" ]; then
+            URL="https://github.com/${{ github.repository }}/releases/download/$TAG/VBuddy-${{ steps.v.outputs.version }}.ipa"
+          else
+            URL="https://github.com/${{ github.repository }}/releases/latest/download/VBuddy-${{ steps.v.outputs.version }}.ipa"
+          fi
+          node ios/make-source.mjs "${{ steps.v.outputs.version }}" "${{ steps.v.outputs.build }}" "out/VBuddy-${{ steps.v.outputs.version }}.ipa" "$URL" "${{ github.repository }}" > out/sidestore-source.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VBuddy-iPhone-${{ steps.v.outputs.version }}
+          path: out/
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" out/VBuddy-*.ipa out/sidestore-source.json --clobber --repo "${{ github.repository }}"

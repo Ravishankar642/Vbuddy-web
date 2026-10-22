@@ -202,7 +202,7 @@ export function LiveFlight({ b, t, now }: { b: BridgeSnapshot; t: Telemetry; now
         <Cell label="Registration" value={reg ?? "–"} sub={reg ? (sim?.vatsimReg === reg ? "From your VATSIM flight plan" : planReg === reg ? "From SimBrief" : "From the simulator") : "Add REG/ to your VATSIM remarks"} />
         <Cell label="Flight plan" value={plan ? `${plan.dep} → ${plan.arr}` : "–"} sub={plan ? [plan.cruiseFt ? `FL${Math.round(plan.cruiseFt / 100)}` : null, plan.distanceNm ? `${int(plan.distanceNm)} nm` : null].filter(Boolean).join(" · ") : "Load one in SimBrief"} />
         <Cell label="In the simulator" value={sim?.aircraftTitle || "–"} />
-        <Cell label="Photo" value={photo ? (photo.kind === "reg" ? "This aircraft" : `A ${a?.name ?? ""} ${typeName ?? ""}`.trim()) : "None found"} sub={photo ? (photo.kind === "reg" ? "Planespotters.net" : "Wikimedia Commons") : undefined} />
+        {photo && <Cell label="Photo" value={photo.kind === "reg" ? "This aircraft" : `A ${a?.name ?? ""} ${typeName ?? ""}`.trim()} sub={photo.kind === "reg" ? "Planespotters.net" : "Wikimedia Commons"} />}
         <Cell label="Distance" value={left !== null ? int(left) : "–"} unit={left !== null ? "nm to go" : undefined} sub={flown !== null ? `${int(flown)} nm flown` : undefined} />
       </Section>
 

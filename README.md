@@ -24,6 +24,8 @@ Version 1.2.0 · Windows · MSFS 2024 (and 2020) · [What's new](CHANGELOG.md)
 
 **Add it to your home screen** (Android: Chrome menu → *Add to Home screen*; iPhone/iPad: Share → *Add to Home Screen*) for a full-screen app.
 
+**iPhone app:** there's also a small iPhone/iPad app you install with SideStore. See [ios/README.md](ios/README.md).
+
 ---
 
 ## Away from home (Setup edition)
