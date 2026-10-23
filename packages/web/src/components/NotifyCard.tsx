@@ -8,6 +8,7 @@ const WHY: Record<string, string> = {
   insecure: "Notifications need a secure (https) address, like your relay link. They can't work on a plain http://192.168… address.",
   "ios-install": "On iPhone and iPad, add VBuddy to your Home Screen first (Share → Add to Home Screen), then open it from there to turn notifications on.",
   unsupported: "This browser can't receive notifications.",
+  app: "The VBuddy iPhone app can't receive notifications (iPhone only allows them for App Store apps and Home Screen web apps). For notifications, open your phone link in Safari and add it to your Home Screen (Share → Add to Home Screen) as well; pair it the same way.",
 };
 
 /** The usual choices, plus whatever value is saved if it isn't one of them (so the box never shows something untrue). */

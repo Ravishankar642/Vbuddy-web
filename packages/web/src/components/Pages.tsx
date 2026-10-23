@@ -237,7 +237,7 @@ export function MeTab({ b, openAlerts }: { b: BridgeSnapshot; openAlerts: () => 
   );
 }
 
-/** Inside the VBuddy iPhone app (ios/): which app version, and a way to point it at another PC. */
+/** Inside the VBuddy iPhone app (ios/): which app version, and a way to point it at another PC's phone link. */
 function NativeAppCard() {
   const app = (window as Window & { vbuddyNative?: { platform: string; version: string; changeAddress: () => void } }).vbuddyNative;
   if (!app) return null;
@@ -249,9 +249,9 @@ function NativeAppCard() {
         <div className="sv__row"><dt>Connected to</dt><dd>{window.location.host}</dd></div>
       </dl>
       <button type="button" className="btn" style={{ marginTop: 12 }} onClick={() => app.changeAddress()}>
-        Change address
+        Change phone link
       </button>
-      <p className="muted" style={{ marginTop: 8 }}>You can also shake the phone to reload or change the address.</p>
+      <p className="muted" style={{ marginTop: 8 }}>You can also shake the phone to reload or change the phone link.</p>
     </section>
   );
 }

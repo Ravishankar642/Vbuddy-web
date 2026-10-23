@@ -1,9 +1,11 @@
 import type { PushPrefs } from "@vbuddy/protocol";
 
-export type PushSupport = "ok" | "insecure" | "unsupported" | "ios-install";
+export type PushSupport = "ok" | "insecure" | "unsupported" | "ios-install" | "app";
 
 /** Can this browser receive notifications, and if not, why (so the UI can say what to do). */
 export function pushSupport(): PushSupport {
+  // The iPhone app (ios/) is a web view: iOS gives web views no push, and app push needs a paid Apple developer account.
+  if ((window as Window & { vbuddyNative?: unknown }).vbuddyNative) return "app";
   if (!window.isSecureContext) return "insecure";
   const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.userAgent.includes("Macintosh") && navigator.maxTouchPoints > 1);
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;

@@ -1,8 +1,9 @@
 import UIKit
 import WebKit
 
-/// VBuddy itself: the web app served by the bridge on your PC, full screen.
+/// VBuddy itself: the web app from your PC, through the VBuddy cloud relay (or straight from the PC on the same Wi-Fi), full screen.
 final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    /// The address the app opens: the phone link (https://relay/?r=ID), or the PC's own address.
     let base: URL
     var onChangeAddress: (() -> Void)?
 
@@ -116,7 +117,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     private func showAppMenu() {
         let sheet = UIAlertController(title: "VBuddy \(AppSettings.version)", message: "Connected to \(base.host ?? base.absoluteString)", preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "Reload", style: .default) { [weak self] _ in self?.reconnect() })
-        sheet.addAction(UIAlertAction(title: "Change address", style: .default) { [weak self] _ in self?.onChangeAddress?() })
+        sheet.addAction(UIAlertAction(title: "Change phone link", style: .default) { [weak self] _ in self?.onChangeAddress?() })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         present(sheet, from: nil)
     }
@@ -163,7 +164,10 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         let e = error as NSError
         if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
         if e.domain == "WebKitErrorDomain" && e.code == 102 { return } // frame load interrupted (a download or an external link)
-        offline.showProblem("Lost VBuddy on \(base.host ?? "your PC"). Check that VBuddy is running and that this phone is on the same Wi-Fi.", address: base)
+        let why = AppSettings.linkId(of: base) != nil
+            ? "Lost the connection to VBuddy. Check that this phone is online, and that VBuddy is running on your PC with Away from home (cloud relay) switched on."
+            : "Lost VBuddy on \(base.host ?? "your PC"). Check that VBuddy is running and that this phone is on the same Wi-Fi."
+        offline.showProblem(why, address: base)
     }
 
     /// iOS dropped the page to free memory (common after a while in the background): load it again.
@@ -294,7 +298,7 @@ final class OfflineView: UIView {
         retry.addTarget(self, action: #selector(tapRetry), for: .touchUpInside)
 
         var c = UIButton.Configuration.plain()
-        c.title = "Change address"
+        c.title = "Change phone link"
         c.baseForegroundColor = .vbInk
         c.buttonSize = .large
         change.configuration = c

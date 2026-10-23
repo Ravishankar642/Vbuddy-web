@@ -12,7 +12,7 @@ const size = statSync(ipa).size;
 const date = new Date().toISOString().slice(0, 10);
 const raw = `https://raw.githubusercontent.com/${repo}/main`;
 const about =
-  "Your MSFS flight on your iPhone: live flight data, the FCU and MCP with real knobs, the CDU, a moving map with VATSIM traffic and weather, text ATC, a sim view with full-resolution screenshots, and a landing analyzer. Connects to VBuddy on your PC over your Wi-Fi.";
+  "Your MSFS flight on your iPhone: live flight data, the FCU and MCP with real knobs, the CDU, a moving map with VATSIM traffic and weather, text ATC, a sim view with full-resolution screenshots, and a landing analyzer. Connects to VBuddy on your PC through the VBuddy cloud relay, on Wi-Fi or mobile data.";
 
 const source = {
   name: "VBuddy",
@@ -53,7 +53,8 @@ const source = {
       appPermissions: {
         entitlements: [],
         privacy: {
-          NSLocalNetworkUsageDescription: "VBuddy connects to the VBuddy app on your PC over your Wi-Fi.",
+          NSCameraUsageDescription: "VBuddy scans the phone link QR code shown in the VBuddy window on your PC.",
+          NSLocalNetworkUsageDescription: "VBuddy can also connect straight to the VBuddy app on your PC over your Wi-Fi.",
           NSPhotoLibraryAddUsageDescription: "VBuddy saves the simulator screenshots you take to your photos.",
         },
       },

@@ -10,13 +10,13 @@
 			<key>Title</key>
 			<string>Connection</string>
 			<key>FooterText</key>
-			<string>Turn on, then open VBuddy to type a new address. You can also shake the phone inside VBuddy.</string>
+			<string>Turn on, then open VBuddy to scan or type a new phone link. You can also shake the phone inside VBuddy.</string>
 		</dict>
 		<dict>
 			<key>Type</key>
 			<string>PSToggleSwitchSpecifier</string>
 			<key>Title</key>
-			<string>Change address</string>
+			<string>Change phone link</string>
 			<key>Key</key>
 			<string>resetAddress</string>
 			<key>DefaultValue</key>

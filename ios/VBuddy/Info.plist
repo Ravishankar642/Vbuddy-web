@@ -57,8 +57,10 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>VBuddy scans the phone link QR code shown in the VBuddy window on your PC.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>VBuddy connects to the VBuddy app on your PC over your Wi-Fi.</string>
+	<string>VBuddy can also connect straight to the VBuddy app on your PC over your Wi-Fi.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>VBuddy saves the simulator screenshots you take to your photos.</string>
 </dict>

@@ -1,15 +1,20 @@
 # VBuddy for iPhone and iPad
 
-A small iPhone/iPad app that opens VBuddy full screen. On first launch it asks for the address shown in the VBuddy window on your PC (for example `192.168.1.23`), remembers it, and connects over your Wi-Fi.
+A small iPhone/iPad app that opens VBuddy full screen through the **VBuddy cloud relay**, so it works at home on Wi-Fi and away on mobile data. On first launch you scan the phone link QR code in the VBuddy window on your PC (or type its 12-character ID); the app remembers it.
 
-The app is a shell around the VBuddy web app served by the bridge on your PC, so updating VBuddy on the PC updates what you see in the app too. On top of the web app it adds:
+You need the VBuddy edition with the cloud relay on the PC (VBuddy-Setup-x.y.z.exe, not the Local one), with **Away from home (cloud relay)** switched on in its window.
+
+The app is a shell around the VBuddy web app that your PC serves through the relay, so updating VBuddy on the PC updates what you see in the app too. On top of the web app it adds:
 
 - **Full screen**, with no Safari bars, and the screen stays on while VBuddy is open (iOS Settings → VBuddy → Keep screen on).
+- **QR code scanning** for the phone link.
 - **Screenshots to Photos.** The sim view's "Save to phone" opens the iOS share sheet; choose **Save Image**.
-- **Changing the address**: shake the phone, use **Settings → VBuddy app → Change address** inside VBuddy, or switch on **Change address** in iOS Settings → VBuddy.
+- **Changing the phone link**: shake the phone, use **Settings → VBuddy app → Change phone link** inside VBuddy, or switch on **Change phone link** in iOS Settings → VBuddy.
 - **Links** to other sites (aircraft photos, GitHub, SimBrief) open in Safari.
 
-Phone notifications (push) are not available in the app, the same as in Safari on a `http://` Wi-Fi address.
+**Notifications:** iPhone doesn't give push notifications to an app like this one (only App Store apps and Home Screen web apps get them). If you want them, also open your phone link in Safari, add it to the Home Screen (Share → Add to Home Screen) and turn notifications on there. Both can be paired at the same time.
+
+Typing a home Wi-Fi address (`192.168.1.23`) instead of a phone link still works, for a PC running the Local edition.
 
 ## Getting the app (.ipa)
 
@@ -56,7 +61,7 @@ Automatically, with the Shortcuts app:
 2. Run it once by hand and allow anything it asks for.
 3. Shortcuts → **Automation** → **+** → **Time of Day**, for example 03:00, **Daily**, **Run Immediately**, notifications off → run the "Refresh apps" shortcut.
 
-The phone needs Wi-Fi when the automation runs. A daily refresh keeps every app far from its 7-day limit.
+The phone needs an internet connection when the automation runs (Wi-Fi is the most reliable). A daily refresh keeps every app far from its 7-day limit.
 
 ### Good to know
 
@@ -66,9 +71,9 @@ The phone needs Wi-Fi when the automation runs. A daily refresh keeps every app 
 
 ## First launch
 
-1. Start VBuddy on your PC. The address is in the VBuddy window under **Connect**.
-2. Open VBuddy on the iPhone, type the address (just `192.168.1.23`; the app adds `:4799`) and tap **Connect**.
-3. When iPhone asks whether VBuddy may find devices on your local network, tap **Allow**. If you tapped Don't Allow, turn it on in iOS Settings → VBuddy → **Local Network**.
+1. On your PC, open the VBuddy window → **Connect** and switch on **Away from home (cloud relay)**. The phone link and its QR code appear there.
+2. Open VBuddy on the iPhone and tap **Scan QR code** (allow the camera), or type the 12 letters and numbers at the end of the phone link (`…/?r=abcd2345wxyz`). You can paste the whole link too.
+3. To press buttons in the cockpit, pair the phone: in VBuddy go to **Systems → Controls** and type the 6-digit pairing code from the VBuddy window. You only do this once.
 
 ## Building it yourself on a Mac
 

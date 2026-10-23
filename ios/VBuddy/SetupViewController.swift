@@ -1,6 +1,7 @@
+import AVFoundation
 import UIKit
 
-/// First launch (or "Change address"): where is VBuddy running?
+/// First launch (or "Change phone link"): the phone link from the VBuddy window on the PC.
 final class SetupViewController: UIViewController, UITextFieldDelegate {
     private let prefill: URL?
     private let initialMessage: String?
@@ -9,6 +10,7 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
     private let scroll = UIScrollView()
     private let field = UITextField()
     private let button = UIButton(type: .system)
+    private let scanButton = UIButton(type: .system)
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let status = UILabel()
 
@@ -50,10 +52,10 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
         mark.isAccessibilityElement = false
 
         let title = label("Connect to VBuddy", font: .systemFont(ofSize: 30, weight: .bold), color: .vbInk)
-        let lead = label("Type the address shown in the VBuddy window on your PC, under Connect. Your iPhone needs to be on the same Wi-Fi as the PC.", font: .preferredFont(forTextStyle: .body), color: .vbMuted)
+        let lead = label("On your PC, open the VBuddy window and switch on Away from home (cloud relay) under Connect. Then scan its QR code, or type the phone link ID. It works on Wi-Fi and on mobile data.", font: .preferredFont(forTextStyle: .body), color: .vbMuted)
 
-        let fieldLabel = label("VBuddy address", font: .systemFont(ofSize: 15, weight: .semibold), color: .vbInk)
-        field.placeholder = "192.168.1.23"
+        let fieldLabel = label("Phone link ID", font: .systemFont(ofSize: 15, weight: .semibold), color: .vbInk)
+        field.placeholder = "abcd2345wxyz"
         field.text = prefill.map { Self.display($0) }
         field.keyboardType = .URL
         field.textContentType = .URL
@@ -72,7 +74,7 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 14, height: 1))
         field.leftViewMode = .always
         field.heightAnchor.constraint(equalToConstant: 52).isActive = true
-        field.accessibilityLabel = "VBuddy address"
+        field.accessibilityLabel = "Phone link ID"
 
         var config = UIButton.Configuration.filled()
         config.title = "Connect"
@@ -84,6 +86,18 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
         button.addTarget(self, action: #selector(connect), for: .touchUpInside)
         button.heightAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
 
+        var scanConfig = UIButton.Configuration.tinted()
+        scanConfig.title = "Scan QR code"
+        scanConfig.image = UIImage(systemName: "qrcode.viewfinder")
+        scanConfig.imagePadding = 8
+        scanConfig.baseBackgroundColor = .vbBrand
+        scanConfig.baseForegroundColor = .vbInk
+        scanConfig.cornerStyle = .large
+        scanConfig.buttonSize = .large
+        scanButton.configuration = scanConfig
+        scanButton.addTarget(self, action: #selector(scan), for: .touchUpInside)
+        scanButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
+
         status.numberOfLines = 0
         status.font = .preferredFont(forTextStyle: .callout)
         status.adjustsFontForContentSizeCategory = true
@@ -94,15 +108,16 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
         spinner.hidesWhenStopped = true
         spinner.color = .vbMuted
 
-        let hint = label("The address looks like 192.168.1.23 (VBuddy adds :4799 for you). If iPhone asks to find devices on your local network, tap Allow.", font: .preferredFont(forTextStyle: .footnote), color: .vbMuted)
+        let hint = label("The ID is the 12 letters and numbers at the end of the phone link (…/?r=abcd2345wxyz). You can paste the whole link too. To press buttons in the cockpit, pair this phone afterwards under Systems → Controls with the code from the VBuddy window.", font: .preferredFont(forTextStyle: .footnote), color: .vbMuted)
 
-        let stack = UIStackView(arrangedSubviews: [markRow, title, lead, fieldLabel, field, button, spinner, status, hint])
+        let stack = UIStackView(arrangedSubviews: [markRow, title, lead, scanButton, fieldLabel, field, button, spinner, status, hint])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 12
         stack.setCustomSpacing(20, after: markRow)
         stack.setCustomSpacing(8, after: title)
         stack.setCustomSpacing(28, after: lead)
+        stack.setCustomSpacing(24, after: scanButton)
         stack.setCustomSpacing(6, after: fieldLabel)
         stack.setCustomSpacing(16, after: field)
         stack.setCustomSpacing(24, after: status)
@@ -129,7 +144,6 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if (field.text ?? "").isEmpty { field.becomeFirstResponder() }
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -146,7 +160,7 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
 
     @objc private func connect() {
         guard let url = AppSettings.normalize(field.text ?? "") else {
-            status.text = "Type the address from the VBuddy window on your PC, for example 192.168.1.23."
+            status.text = "Type the phone link ID from the VBuddy window on your PC (12 letters and numbers), or scan its QR code."
             return
         }
         field.resignFirstResponder()
@@ -176,12 +190,45 @@ final class SetupViewController: UIViewController, UITextFieldDelegate {
         return l
     }
 
-    /// http://192.168.1.23:4799/ → 192.168.1.23 (what people type).
+    /// What to show in the box: the ID for the usual relay, the whole link for any other address.
     private static func display(_ url: URL) -> String {
+        if let id = AppSettings.linkId(of: url), url.host == AppSettings.defaultRelayHost { return id }
         guard let host = url.host else { return url.absoluteString }
         if url.scheme == "http" && (url.port == nil || url.port == AppSettings.defaultPort) { return host }
-        var s = "\(url.scheme ?? "http")://\(host)"
-        if let p = url.port { s += ":\(p)" }
-        return s
+        return url.absoluteString
+    }
+
+    // MARK: QR code
+
+    @objc private func scan() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            presentScanner()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { ok in
+                DispatchQueue.main.async { [weak self] in ok ? self?.presentScanner() : self?.cameraOff() }
+            }
+        default:
+            cameraOff()
+        }
+    }
+
+    private func presentScanner() {
+        let vc = ScannerViewController { [weak self] text in
+            guard let self else { return }
+            self.field.text = text
+            self.connect()
+        }
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true)
+    }
+
+    private func cameraOff() {
+        let a = UIAlertController(title: "Camera is off for VBuddy", message: "Turn it on in Settings → VBuddy → Camera to scan the QR code, or type the phone link ID instead.", preferredStyle: .alert)
+        a.addAction(UIAlertAction(title: "Settings", style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        })
+        a.addAction(UIAlertAction(title: "OK", style: .cancel))
+        present(a, animated: true)
     }
 }

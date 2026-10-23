@@ -23,7 +23,7 @@ enum AppSettings {
         set { UserDefaults.standard.set(newValue?.absoluteString, forKey: addressKey) }
     }
 
-    /// "Change address" was switched on in iOS Settings: forget the address once and switch it back off.
+    /// "Change phone link" was switched on in iOS Settings: forget the address once and switch it back off.
     static func takeResetRequest() -> Bool {
         guard UserDefaults.standard.bool(forKey: resetAddressKey) else { return false }
         UserDefaults.standard.set(false, forKey: resetAddressKey)
@@ -34,40 +34,88 @@ enum AppSettings {
         UIApplication.shared.isIdleTimerDisabled = UserDefaults.standard.bool(forKey: keepScreenOnKey)
     }
 
-    /// "192.168.1.23" → http://192.168.1.23:4799/ ; "https://relay.example.com" stays as it is.
+    /// The VBuddy cloud relay. The phone link in the VBuddy window is https://<relay>/?r=<12-character ID>.
+    static let defaultRelayHost = "vbuddy.duckdns.org"
+    /// The cookie the relay routes by, and the query parameter that sets it (packages/protocol/src/tunnel.ts).
+    static let routeCookie = "vb"
+    static let routeParam = "r"
+
+    static func isLinkId(_ s: String) -> Bool {
+        s.count == 12 && s.allSatisfy { ("a"..."z").contains($0) || ("2"..."7").contains($0) }
+    }
+
+    /// What people paste or scan, turned into the address the app opens:
+    ///  - "abcd2345wxyz" (the phone link ID)            → https://vbuddy.duckdns.org/?r=abcd2345wxyz
+    ///  - "https://vbuddy.duckdns.org/?r=abcd2345wxyz"  → as it is (another relay works too)
+    ///  - "192.168.1.23" (the PC on the same Wi-Fi)      → http://192.168.1.23:4799/
     static func normalize(_ raw: String) -> URL? {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
+        if isLinkId(s.lowercased()) { return URL(string: "https://\(defaultRelayHost)/?\(routeParam)=\(s.lowercased())") }
         let lower = s.lowercased()
-        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") { s = "http://" + s }
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") {
+            let looksLocal = s.range(of: #"^(localhost|\d{1,3}(\.\d{1,3}){3})(:|/|$)"#, options: .regularExpression) != nil
+            s = (looksLocal ? "http://" : "https://") + s
+        }
         guard var c = URLComponents(string: s), let host = c.host, !host.isEmpty else { return nil }
-        if c.port == nil && c.scheme?.lowercased() == "http" { c.port = defaultPort }
+        if c.port == nil && c.scheme?.lowercased() == "http" && host.range(of: #"^(localhost|\d{1,3}(\.\d{1,3}){3})$"#, options: .regularExpression) != nil {
+            c.port = defaultPort
+        }
+        let id = c.queryItems?.first(where: { $0.name == routeParam })?.value?.lowercased()
         c.path = "/"
-        c.query = nil
+        c.queryItems = (id.map(isLinkId) ?? false) ? [URLQueryItem(name: routeParam, value: id)] : nil
         c.fragment = nil
         return c.url
     }
 
-    /// Asks the bridge whether it's there (GET /api/health).
-    static func check(_ base: URL, completion: @escaping (String?) -> Void) {
-        let url = base.appendingPathComponent("api/health")
-        let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 6)
+    /// https://vbuddy.duckdns.org/?r=abcd2345wxyz → https://vbuddy.duckdns.org/
+    static func base(of url: URL) -> URL {
+        var c = URLComponents(url: url, resolvingAgainstBaseURL: false) ?? URLComponents()
+        c.path = "/"
+        c.query = nil
+        c.fragment = nil
+        return c.url ?? url
+    }
+
+    /// The phone link ID in an address, if it goes through the relay.
+    static func linkId(of url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == routeParam })?.value
+    }
+
+    /// Asks VBuddy whether it's there (GET /api/health, through the relay when the address has a phone link ID).
+    static func check(_ address: URL, completion: @escaping (String?) -> Void) {
+        let root = base(of: address)
+        let id = linkId(of: address)
+        var req = URLRequest(url: root.appendingPathComponent("api/health"), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        if let id {
+            req.httpShouldHandleCookies = false
+            req.setValue("\(routeCookie)=\(id)", forHTTPHeaderField: "Cookie")
+        }
+        let where_ = root.host ?? "that address"
         URLSession.shared.dataTask(with: req) { _, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             let problem: String?
             if let error = error as? URLError {
                 switch error.code {
-                case .timedOut, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost:
-                    problem = "No answer from \(base.host ?? "that address"). Check that VBuddy is running on your PC and that this phone is on the same Wi-Fi."
-                case .notConnectedToInternet:
-                    problem = "This phone isn't on a network. Join the same Wi-Fi as your PC."
+                case .notConnectedToInternet, .dataNotAllowed:
+                    problem = "This phone isn't online. Turn on Wi-Fi or mobile data."
+                case .timedOut, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .dnsLookupFailed:
+                    problem = id != nil
+                        ? "No answer from the VBuddy relay (\(where_)). Check your internet connection and try again."
+                        : "No answer from \(where_). Check that VBuddy is running on your PC and that this phone is on the same Wi-Fi."
+                case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot:
+                    problem = "\(where_) didn't offer a secure connection. Check the link."
                 default:
-                    problem = "Couldn't connect (\(error.localizedDescription)). If iPhone asked to find devices on your local network, tap Allow, then try again."
+                    problem = "Couldn't connect (\(error.localizedDescription))."
                 }
             } else if let error {
                 problem = "Couldn't connect (\(error.localizedDescription))."
+            } else if id != nil && code == 503 {
+                problem = "Your PC isn't connected to the relay. Start VBuddy on the PC and switch on Away from home (cloud relay) in its window."
             } else if code == 0 || code >= 500 {
-                problem = "\(base.host ?? "That address") answered, but it doesn't look like VBuddy."
+                problem = "\(where_) answered, but VBuddy didn't (error \(code)). Try again in a moment."
+            } else if code == 404 {
+                problem = "\(where_) doesn't look like VBuddy. Check the link."
             } else {
                 problem = nil
             }
