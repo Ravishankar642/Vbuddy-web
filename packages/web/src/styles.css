@@ -846,6 +846,9 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .cdu__row .is-unused { opacity: 0.45; }
 .cdu-c0 { color: var(--cdu-white); } .cdu-c1 { color: var(--cdu-cyan); } .cdu-c2 { color: var(--cdu-green); }
 .cdu-c3 { color: var(--cdu-magenta); } .cdu-c4 { color: var(--cdu-amber); } .cdu-c5 { color: var(--cdu-red); }
+.cdu-c6 { color: #ffe14d; } .cdu-c7 { color: #8a8f98; }
+.cdu--airbus .cdu__screen { font-family: var(--num); }
+.cdu--airbus .cdu__fn .cdu__key { font-size: 12px; }
 .cdu__msg { grid-row: 1 / -1; align-self: center; margin: 0; padding: 12px; color: var(--cdu-green); font: 600 14px/1.45 var(--mono); text-align: center; }
 
 /* Line select keys sit beside their data line: LSK n spans label row 2n-1 and data row 2n of the 14-row screen. */
@@ -1024,3 +1027,59 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .ms__body { overscroll-behavior-y: contain; }
 /* an odd last box spans the row instead of leaving a gap */
 @media (max-width: 899px) { .lf__grid > .lf__cell:last-child:nth-child(odd) { grid-column: span 2; } }
+
+/* ---- VBuddy Ground: airport chart, taxi route and guidance ---- */
+.gnd__apt { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.gnd__icao { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.gnd__icao input, .gnd__form input, .gnd__form select, .gnd__paste textarea { font: 600 16px var(--num); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--panel-edge); background: var(--input); color: var(--text); min-height: 44px; min-width: 0; box-sizing: border-box; }
+.gnd__icao input { width: 7.5em; text-transform: uppercase; letter-spacing: .06em; }
+.gnd__apt .btn.is-on { color: var(--accent); }
+.gnd__meta { flex-basis: 100%; margin: 4px 0 0; }
+.gnd__form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 10px; }
+.gnd__form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.gnd__form select { min-width: 7em; }
+.gnd__via { flex: 1 1 10em; }
+.gnd__via input { text-transform: uppercase; }
+.gnd__to { align-self: flex-end; }
+.gnd__paste { margin-top: 10px; font-size: 14px; }
+.gnd__paste summary { cursor: pointer; color: var(--muted); font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.gnd__paste form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.gnd__paste textarea { flex: 1 1 16em; font-family: inherit; font-weight: 500; resize: vertical; }
+.gnd__atc { display: grid; gap: 8px; margin-top: 10px; }
+.gnd__clr { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 12px; background: var(--well); border: 1px solid var(--panel-edge); }
+.gnd__clr span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gnd__clr q { font-weight: 600; overflow-wrap: anywhere; }
+.gnd__plan { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--edge); }
+.gnd__text { margin: 0 0 4px; font-weight: 700; font-size: 16px; line-height: 1.35; }
+.gnd__plan .chips { margin-top: 8px; }
+.gnd__guide { display: flex; gap: 14px; align-items: center; border-color: color-mix(in srgb, #ff4fd8 45%, var(--edge)); }
+.gnd__guide > div:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gnd__arrow { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; font-size: 32px; font-weight: 700; background: #ff4fd8; color: #2a0022; }
+.gnd__arrow--cross, .gnd__arrow--hold { background: #ff3b4e; color: #fff; font-size: 26px; }
+.gnd__arrow--arrive { background: #3987e5; color: #fff; }
+.gnd__next { font-size: 18px; line-height: 1.2; }
+.gnd__in { font: 700 22px var(--num); }
+.gnd__off { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border-color: var(--bad); }
+/* on the map */
+.gnd-lbl-wrap { pointer-events: none; }
+.gnd-lbl-wrap span { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; font: 700 11px/1 var(--num); padding: 2px 4px; border-radius: 4px; }
+.gnd-rwylbl { background: #fff; color: #111; font-size: 12px !important; }
+.gnd-name { background: #f2c94c; color: #111; display: none; }
+.gnd-stand { background: rgba(10, 20, 40, .8); color: #fff; display: none; transform: translate(-50%, -160%) !important; }
+.gnd-cross { background: #ff3b4e; color: #fff; transform: translate(-50%, -170%) !important; }
+.map--gnd-names .gnd-name { display: block; }
+.map--gnd-stands .gnd-stand { display: block; }
+
+/* ---- ATC to text: transcripts and AI ATC in Comms ---- */
+.msg__src { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--raised-2); color: var(--muted); }
+.msg__src--voice { background: color-mix(in srgb, #3987e5 22%, transparent); color: var(--text); }
+.msg__src--sayintentions, .msg__src--beyondatc { background: color-mix(in srgb, #2fbf71 22%, transparent); color: var(--text); }
+.msg__acts { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.msg__acts .btn { text-decoration: none; display: inline-flex; align-items: center; }
+.listenrow { display: grid; grid-template-columns: auto auto 1fr; gap: 2px 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--edge); }
+.listenrow:first-of-type { border-top: 0; }
+.listenrow small { grid-column: 2 / -1; }
+.listenrow__state { color: var(--muted); font-size: 14px; }
+.listenrow__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.listenrow__dot--ok { background: #2fbf71; } .listenrow__dot--warn { background: #e0a84f; } .listenrow__dot--bad { background: var(--bad); } .listenrow__dot--off { background: var(--edge-strong); }
+.listenrow__bar { width: 100%; height: 6px; }

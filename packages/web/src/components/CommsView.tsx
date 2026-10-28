@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { formatMhz, parseMhz, UNICOM_HZ, type ChatMessage, type CommsCommand } from "@vbuddy/protocol";
+import { formatMhz, isTaxiClearance, parseMhz, UNICOM_HZ, type AtcAppStatus, type ChatMessage, type CommsCommand, type VoiceStatus } from "@vbuddy/protocol";
+import { apiFetch } from "../lib/api";
 import type { BridgeSnapshot, CmdReply } from "../lib/bridge-client";
 import { chimeEnabled, playChime, setChimeEnabled } from "../lib/chime";
 import { useBridgeActions } from "../lib/useBridge";
@@ -336,9 +337,20 @@ function Console({ b, run, enabled }: { b: BridgeSnapshot; run: Run; enabled: bo
                 <div key={m.id} className={`msg msg--${m.dir}${m.attention ? " is-attention" : ""}${m.kind === "system" ? " msg--system" : ""}`}>
                   <div className="msg__meta">
                     <b>{m.dir === "out" ? "You" : m.from}</b>
+                    {m.source && m.source !== "vatsim" && <span className={`msg__src msg__src--${m.source}`}>{SOURCE_LABEL[m.source]}</span>}
                     <span>{zulu(m.ts, false)}</span>
                   </div>
                   <div className="msg__text">{m.text}</div>
+                  {(m.clip || (m.dir === "in" && isTaxiClearance(m.text))) && (
+                    <div className="msg__acts">
+                      {m.clip && <ClipButton id={m.clip} />}
+                      {m.dir === "in" && isTaxiClearance(m.text) && (
+                        <a className="btn btn--map" href="#ground">
+                          Taxi route
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -372,6 +384,79 @@ function Console({ b, run, enabled }: { b: BridgeSnapshot; run: Run; enabled: bo
         )}
       </div>
     </div>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = { voice: "🎙 heard", sayintentions: "SayIntentions", beyondatc: "BeyondATC" };
+
+/** Plays the bridge's recording of a transmission (only kept for a while, on the PC). */
+function ClipButton({ id }: { id: string }) {
+  const [st, setSt] = useState<"idle" | "loading" | "playing" | "gone">("idle");
+  const audio = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => () => audio.current?.pause(), []);
+  const play = async () => {
+    if (st === "playing") {
+      audio.current?.pause();
+      setSt("idle");
+      return;
+    }
+    setSt("loading");
+    try {
+      const r = await apiFetch(`/api/voice/clip/${encodeURIComponent(id)}`);
+      if (!r.ok) return setSt("gone");
+      const url = URL.createObjectURL(await r.blob());
+      const a = new Audio(url);
+      audio.current = a;
+      a.onended = () => {
+        URL.revokeObjectURL(url);
+        setSt("idle");
+      };
+      await a.play();
+      setSt("playing");
+    } catch {
+      setSt("gone");
+    }
+  };
+  return (
+    <button type="button" className="btn btn--map" onClick={() => void play()} disabled={st === "gone" || st === "loading"} aria-label={st === "playing" ? "Stop the recording" : "Play the recording"}>
+      {st === "playing" ? "■ Stop" : st === "gone" ? "Recording gone" : st === "loading" ? "…" : "▶ Play"}
+    </button>
+  );
+}
+
+const VOICE_STATE: Record<VoiceStatus["state"], string> = { off: "Off", setup: "Needs setting up", starting: "Starting", listening: "Listening", error: "Problem" };
+const APP_STATE: Record<AtcAppStatus["state"], string> = { off: "Off", waiting: "Waiting", live: "Connected", error: "Problem" };
+
+/** Voice to text and the AI ATC apps: what VBuddy is listening to. Set up in the VBuddy window on the PC. */
+function ListeningCard({ b }: { b: BridgeSnapshot }) {
+  const v = b.comms?.voice;
+  const apps = b.comms?.apps;
+  if (!v && !apps) return null;
+  const row = (name: string, state: string, tone: string, msg: string | null | undefined) => (
+    <div className="listenrow">
+      <span className={`listenrow__dot listenrow__dot--${tone}`} aria-hidden="true" />
+      <b>{name}</b>
+      <span className="listenrow__state">{state}</span>
+      {msg && <small className="muted">{msg}</small>}
+    </div>
+  );
+  const tone = (st: string) => (st === "listening" || st === "live" ? "ok" : st === "error" ? "bad" : st === "off" ? "off" : "warn");
+  return (
+    <section className="card">
+      <h2 className="card__title">ATC to text</h2>
+      {v &&
+        row(
+          "Voice to text",
+          VOICE_STATE[v.state] + (v.state === "listening" && v.device ? ` · ${v.device}` : ""),
+          tone(v.state),
+          v.state === "off" ? "Turns what ATC says on your radio into text here, on the PC itself. Switch it on in the VBuddy window on the PC." : v.message,
+        )}
+      {v?.progress !== null && v?.progress !== undefined && (
+        <progress className="listenrow__bar" value={v.progress} max={1} aria-label="Download progress" />
+      )}
+      {apps && row("SayIntentions.AI", APP_STATE[apps.sayintentions.state], tone(apps.sayintentions.state), apps.sayintentions.state === "off" ? "Add your SayIntentions developer key in the VBuddy window to see its ATC here." : apps.sayintentions.message)}
+      {apps && row("BeyondATC", APP_STATE[apps.beyondatc.state], tone(apps.beyondatc.state), apps.beyondatc.message)}
+    </section>
   );
 }
 
@@ -429,6 +514,8 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
         )}
         <NetworkCard b={b} run={commsCommand} enabled={enabled} />
       </section>
+
+      <ListeningCard b={b} />
 
       <section className="card">
         <div className="card__head">

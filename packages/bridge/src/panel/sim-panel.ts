@@ -363,8 +363,9 @@ export class SimPanel implements PanelBackend {
   private lastSys: number[] = [];
   /** Camera numbering differs between the two simulators; the generation comes from the simulator's name. */
   private cameraStates(): { cockpit: number; outside: number; drone: number } {
-    const major = Number(/\b(\d+)\./.exec(this.sim.status().simName ?? "")?.[1] ?? 12);
-    return { cockpit: 2, outside: 3, drone: major >= 12 ? 8 : 4 };
+    const st = this.sim.status();
+    const gen = st.simGen ?? (Number(/\((\d+)\./.exec(st.simName ?? "")?.[1] ?? /\b(\d+)\./.exec(st.simName ?? "")?.[1] ?? 12) >= 12 ? "msfs2024" : "msfs2020");
+    return { cockpit: 2, outside: 3, drone: gen === "msfs2024" ? 8 : 4 };
   }
 
   private sysFrom(x: number[]): NonNullable<PanelState["sys"]> {

@@ -112,3 +112,8 @@ select.text { appearance: auto; }
 .steps code { background: var(--raised, rgba(0,0,0,.06)); padding: 1px 6px; border-radius: 6px; }
 .notes { white-space: pre-wrap; font-size: 13px; line-height: 1.45; background: var(--raised, rgba(0,0,0,.04)); border-radius: 10px; padding: 10px 12px; margin: 8px 0; max-height: 180px; overflow: auto; }
 #updateCard .btns { display: flex; gap: 8px; }
+
+/* ATC voice to text, AI ATC */
+.field--check > span { display: flex; align-items: center; gap: 8px; }
+.field--check input { width: 18px; height: 18px; }
+#voiceProgress { width: 100%; height: 8px; margin: 8px 0 0; }

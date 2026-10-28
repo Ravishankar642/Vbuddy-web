@@ -1,4 +1,4 @@
-import { formatMhz, MAX_CHAT, toHz, type BridgeToPlugin, type ChatMessage, type CommsCommand, type CommsState, type PluginToBridge } from "@vbuddy/protocol";
+import { formatMhz, MAX_CHAT, mentionsCallsign, toHz, type AtcAppStatus, type BridgeToPlugin, type ChatMessage, type ChatSource, type CommsCommand, type CommsState, type PluginToBridge, type VoiceStatus } from "@vbuddy/protocol";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Logger } from "../log.js";
@@ -33,6 +33,9 @@ export class CommsService {
   private stateCbs: Array<() => void> = [];
   private chatCbs: Array<(m: ChatMessage) => void> = [];
   private lastJson = "";
+  private extra: () => { voice?: VoiceStatus; apps?: { sayintentions: AtcAppStatus; beyondatc: AtcAppStatus } } = () => ({});
+  /** A callsign to listen for when VATSIM isn't connected (SayIntentions / BeyondATC flights, or the SimBrief plan). */
+  private fallbackCallsign: () => string | null = () => null;
 
   constructor(
     private radios: RadioBackend | null,
@@ -52,7 +55,56 @@ export class CommsService {
       net: { ...this.net, pluginLinked: this.plugin !== null, last: this.last },
       radios: v?.radios ?? null,
       xpdr: v?.xpdr ?? null,
+      ...this.extra(),
     };
+  }
+
+  /** Voice-to-text and AI ATC status, shown with the radios. Call `extrasChanged` when they change. */
+  setExtras(get: () => { voice?: VoiceStatus; apps?: { sayintentions: AtcAppStatus; beyondatc: AtcAppStatus } }, callsign?: () => string | null) {
+    this.extra = get;
+    if (callsign) this.fallbackCallsign = callsign;
+    this.changed();
+  }
+  extrasChanged() {
+    this.changed();
+  }
+
+  /** Your callsign as ATC would use it: the VATSIM one, else the AI ATC app's or the flight plan's. */
+  myCallsign(): string | null {
+    return this.net.callsign ?? this.fallbackCallsign();
+  }
+
+  /** The frequency you're listening on: COM1 if it's receiving, else COM2, else COM1. */
+  listeningHz(): number | null {
+    const r = this.radios?.values()?.radios;
+    if (!r) return null;
+    if (r.com1.rx || !r.com2.rx) return r.com1.active;
+    return r.com2.active;
+  }
+
+  /**
+   * A message from VBuddy's own voice-to-text or an AI ATC app. Radio calls join the conversation on their frequency;
+   * "attention" (badge, chime, push) when it uses your callsign.
+   */
+  addExternal(m: { source: ChatSource; text: string; from: string; dir?: "in" | "out"; freqHz?: number | null; to?: string | null; clip?: string; kind?: "radio" | "private" | "system" }): ChatMessage {
+    const dir = m.dir ?? "in";
+    const hz = m.freqHz ?? (m.source === "voice" ? this.listeningHz() : null);
+    const kind = m.kind ?? "radio";
+    const me = this.myCallsign();
+    const spoken = m.source === "voice" || m.source === "beyondatc" ? mentionsCallsign(m.text, me) : false;
+    const attention = dir === "in" && kind === "radio" && (spoken || this.mentionsMe(m.text));
+    return this.push({
+      kind,
+      dir,
+      from: m.from,
+      to: m.to ?? null,
+      freqHz: hz ? [hz] : [],
+      text: m.text,
+      thread: kind === "private" ? `dm:${m.from.toUpperCase()}` : kind === "system" ? "system" : `freq:${hz ?? 0}`,
+      attention,
+      source: m.source,
+      ...(m.clip ? { clip: m.clip } : {}),
+    });
   }
   onState(cb: () => void) {
     this.stateCbs.push(cb);
@@ -132,7 +184,7 @@ export class CommsService {
   /* ------------------------------------------------------------ chat */
 
   private mentionsMe(text: string): boolean {
-    const cs = this.net.callsign;
+    const cs = this.myCallsign();
     if (!cs) return false;
     const esc = cs.replace(/[^A-Za-z0-9]/g, "");
     return new RegExp(`(^|[^A-Za-z0-9])${esc.split("").join("[ -]?")}($|[^A-Za-z0-9])`, "i").test(text);

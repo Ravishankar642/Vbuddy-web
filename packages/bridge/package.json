@@ -1,6 +1,6 @@
 {
   "name": "@vbuddy/bridge",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "private": true,
   "description": "Runs on the simulator PC: reads MSFS via SimConnect and streams it to VBuddy clients",
   "type": "module",
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@vbuddy/protocol": "workspace:*",
+    "fflate": "^0.8.3",
     "node-simconnect": "^4.2.1",
     "web-push": "^3.6.7",
     "ws": "^8.18.3"

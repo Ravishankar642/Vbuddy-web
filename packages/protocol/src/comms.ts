@@ -19,6 +19,10 @@ export const CommsStateSchema = z.object({
   /** null = no simulator connected. */
   radios: z.object({ com1: RadioSchema, com2: RadioSchema }).nullable(),
   xpdr: z.object({ code: z.string().regex(/^[0-7]{4}$/), mode: XpdrModeSchema, ident: z.boolean() }).nullable(),
+  /** Live ATC voice to text. Absent on older bridges. */
+  voice: z.lazy(() => VoiceStatusSchema).optional(),
+  /** AI ATC apps. Absent on older bridges. */
+  apps: z.lazy(() => z.object({ sayintentions: AtcAppStatusSchema, beyondatc: AtcAppStatusSchema })).optional(),
 });
 export type CommsState = z.infer<typeof CommsStateSchema>;
 
@@ -35,8 +39,39 @@ export const ChatMessageSchema = z.object({
   thread: z.string(),
   /** Worth interrupting the pilot for: a DM, a SELCAL, or a radio call that mentions your callsign. */
   attention: z.boolean(),
+  /**
+   * Where it came from: VATSIM text (through vPilot; the default when absent), VBuddy's own transcript of what was said
+   * on the radio, or an AI ATC app (SayIntentions.AI, BeyondATC).
+   */
+  source: z.enum(["vatsim", "voice", "sayintentions", "beyondatc"]).optional(),
+  /** A recording of it on the bridge PC (/api/voice/clip/<id>), for voice transcripts. */
+  clip: z.string().max(40).optional(),
 });
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+export type ChatSource = NonNullable<ChatMessage["source"]>;
+
+/** VBuddy's live ATC voice-to-text, as the app shows it. */
+export const VoiceStatusSchema = z.object({
+  /** off: switched off; setup: on, but the speech engine or its model still has to be downloaded; starting; listening; error. */
+  state: z.enum(["off", "setup", "starting", "listening", "error"]),
+  /** In words, for the pilot. */
+  message: z.string().max(300).nullable(),
+  /** The output device being listened to ("Headset (USB)"). */
+  device: z.string().max(120).nullable(),
+  /** Speech model ("base.en"). */
+  model: z.string().max(40).nullable(),
+  /** A download in progress, 0-1. */
+  progress: z.number().min(0).max(1).nullable(),
+});
+export type VoiceStatus = z.infer<typeof VoiceStatusSchema>;
+
+/** An AI ATC app VBuddy reads (SayIntentions.AI, BeyondATC). */
+export const AtcAppStatusSchema = z.object({
+  /** off: not set up; waiting: set up, app or flight not found yet; live: messages are coming in; error. */
+  state: z.enum(["off", "waiting", "live", "error"]),
+  message: z.string().max(300).nullable(),
+});
+export type AtcAppStatus = z.infer<typeof AtcAppStatusSchema>;
 
 export const CommsCommandSchema = z.discriminatedUnion("op", [
   z.object({

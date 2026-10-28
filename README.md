@@ -47,8 +47,9 @@ Prefer to stay on your own network? Use the Local edition, or a private VPN such
 | Tab | What you get |
 |---|---|
 | **Flights** | Your flight in progress, laid out like a flight tracker: callsign, airline, aircraft photo, route and progress, then altitude, speed, wind, airspace, autopilot and more |
-| **Systems** | Engines, autopilot, fuel, electrical, cabin and weather; **Controls** (FCU/MCP, lights, simulator buttons); **Sim view**; **CDU** (PMDG); **Fenix EFB** (Fenix) |
-| **Comms** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC); **Traffic**: nearby VATSIM pilots and ATC |
+| **Ground** | The airport's taxiways, runways and stands from your simulator's own scenery, a taxi route (typed, or read from ATC's taxi clearance), and turn-by-turn guidance along it |
+| **Systems** | Engines, autopilot, fuel, electrical, cabin and weather; **Controls** (FCU/MCP, lights, simulator buttons); **Sim view**; **CDU / MCDU** (PMDG, Fenix, FlyByWire); **Fenix EFB** (Fenix) |
+| **Comms** | COM radios, transponder, VATSIM chat and ACARS (Hoppie telex and CPDLC); **ATC to text**: what ATC says on your radio as text, plus SayIntentions.AI and BeyondATC; **Traffic**: nearby VATSIM pilots and ATC |
 | **Logbook** | Your flight record and every landing; **My flights**: flights flown and planned |
 | Search | Airport weather and your SimBrief flight plan |
 
@@ -74,6 +75,14 @@ Under **Systems → Controls**, for every aircraft: lights, and a **Simulator an
 ### Sim view
 **Systems → Sim view** shows the simulator window on your phone, about three pictures a second. If you use **ChasePlane**, your saved camera views are listed there and switch with one tap; without it, there are Cockpit and Outside buttons. **Take screenshot** grabs the sim window at full size; it's kept on the PC (`%APPDATA%\VBuddy\screenshots`) and *Save to phone* puts it in your photos.
 
+### Ground (taxi routes)
+**Ground** reads the airport you're at (or any ICAO you type) from your simulator's scenery, MSFS 2020 or 2024, add-on airports included, and draws its runways, taxiways with their names, holding points and stands on the map. Pick a runway or a stand, optionally the taxiways to follow ("B C1 A"), and VBuddy plans the route, says it the way ATC would ("Taxi to holding point runway 27R via B, C1, A. Cross runway 09R/27L."), and while you taxi shows what's next: *Turn left onto C1 in 120 m*, *Hold short of runway 09R/27L*. When ATC gives you a taxi clearance, by VATSIM text, voice-to-text or an AI ATC app, it's offered on the Ground page: tap **Use** and the route follows it. Airports are read once and kept on the PC for a week (`%APPDATA%\VBuddy\ground`); *reload* reads one again.
+
+### ATC to text
+**Voice to text** turns what's said on your radio into text in Comms, on the PC itself: nothing is sent anywhere. Switch it on in the VBuddy window (Settings → *ATC voice to text*), pick the output vPilot plays ATC on (a headset the sim's own sound doesn't use works best), and press *Download and start*: VBuddy fetches the open-source [whisper.cpp](https://github.com/ggml-org/whisper.cpp) speech engine and an English model once (75–466 MB depending on the model). Calls that use your callsign (however it's said: "Speedbird one two three", "Qatari twelve thirty-four") get the chime, the badge and a notification; each one can be played back for a while. It works with anything that speaks ATC on that output: vPilot, BeyondATC, SayIntentions.
+
+**SayIntentions.AI**: paste your SayIntentions developer key in the VBuddy window (*Your accounts*) and the SayIntentions conversation shows in Comms while you fly with it. **BeyondATC** has no interface for other apps, so VBuddy reads the log it writes as you fly (experimental; its voice is caught by voice to text either way).
+
 ### Notifications
 The **bell** at the top of the sheet opens Notifications: one switch for the device, then what to be told about: takeoff, top of climb, passing 10,000 ft, top of descent, approaching the destination, touchdown, at the gate; ATC changes and boundaries, messages, VATSIM connect, flight plan loaded; aircraft alerts, low fuel, autopilot off, the simulator stopping or pausing. They need a paired device on the relay's https address; on iPhone, add VBuddy to the Home Screen and open it from there. While VBuddy is on screen you see them in the app instead.
 
@@ -83,10 +92,10 @@ The **bell** at the top of the sheet opens Notifications: one switch for the dev
 
 | Aircraft | What works |
 |---|---|
-| **Fenix A320** | Full FCU and captain's EFIS with real knobs, lights, radios, and the **Fenix EFB** inside VBuddy. Needs the free MobiFlight WASM module in your Community folder if the FCU says it isn't reaching the aircraft. |
+| **Fenix A320** | Full FCU and captain's EFIS with real knobs, lights, radios, both **MCDUs** (Systems → MCDU, through the Fenix's own data service) and the **Fenix EFB** inside VBuddy. Needs the free MobiFlight WASM module in your Community folder if the FCU says it isn't reaching the aircraft. |
 | **PMDG 737 and 777** | MCP (speed, heading, altitude, V/S, course on the 737) with its lights, and the **CDU** (Systems → CDU). Sets itself up (below). |
 | **iniBuilds A340, A350, A380** | The same FCU screen as the Fenix: knobs, push/pull, AP, A/THR, LOC, APPR, FD and more, plus lights. Some FCU lights in the app may stay dark if the aircraft doesn't report them. |
-| **FlyByWire A32NX / A380X** | Airbus FCU and lights. |
+| **FlyByWire A32NX / A380X** | Airbus FCU and lights. On the A32NX (and the Headwind A339X), both **MCDUs** through FlyByWire SimBridge: start SimBridge and set the aircraft's EFB *Settings → Sim Options → SimBridge* to Enabled. |
 | **iFly 737 MAX** | MCP buttons and knobs. |
 | **Default and most other aircraft** | Autopilot panel and lights through the simulator's standard controls. |
 | **FSLabs, ToLiss, iniBuilds A300/A310** | These aircraft keep their cockpit private, so the autopilot and lights can't be operated from outside. Everything else (map, systems, landings, simulator controls) works. |

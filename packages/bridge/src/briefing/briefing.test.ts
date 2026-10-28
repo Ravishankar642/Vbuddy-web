@@ -160,7 +160,7 @@ test("briefing: SimBrief says no plan / is unreachable / weather is down", async
 test("integrations: validates, saves privately, reloads, changes only what is sent", () => {
   const file = join(mkdtempSync(join(tmpdir(), "vb-int-")), "integrations.json");
   const s = new IntegrationStore(file);
-  assert.deepEqual(s.get(), { simbrief: "", hoppie: "", owm: "" });
+  assert.deepEqual(s.get(), { simbrief: "", hoppie: "", owm: "", sayintentions: "", beyondatc: true });
   assert.equal(s.set({ simbrief: "  jsmith " }), null);
   assert.equal(s.set({ hoppie: "AbC123xyz9" }), null);
   assert.ok(s.set({ simbrief: "bad/name?" })!.includes("SimBrief"));
@@ -173,4 +173,10 @@ test("integrations: validates, saves privately, reloads, changes only what is se
   assert.equal(new IntegrationStore(file).get().hoppie, "");
   if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o077, 0);
   assert.ok(readFileSync(file, "utf8").includes("123456"));
+  // The AI ATC settings: a developer key, and BeyondATC's log on or off.
+  assert.ok(s.set({ sayintentions: "no spaces allowed" })!.includes("SayIntentions"));
+  assert.equal(s.set({ sayintentions: " si-dev-1234567 ", beyondatc: false }), null);
+  const back = new IntegrationStore(file).get();
+  assert.equal(back.sayintentions, "si-dev-1234567");
+  assert.equal(back.beyondatc, false);
 });

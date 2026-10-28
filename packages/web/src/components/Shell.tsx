@@ -3,15 +3,16 @@ import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
 import { MAP_STYLES, useMapStyle } from "../lib/mapstyle";
 import { Grab, useAppHeight, usePullDown, useSheet, WIDE_PANEL_PX } from "./Sheet";
-import { IconAtlas, IconBell, IconBroadcast, IconChip, IconClose, IconFlight, IconGlobe, IconInbox, IconLayers, IconLocate, IconRain, IconRefresh, IconSearch } from "./icons";
+import { IconAtlas, IconBell, IconBroadcast, IconChip, IconClose, IconFlight, IconGlobe, IconGround, IconInbox, IconLayers, IconLocate, IconRain, IconRefresh, IconSearch } from "./icons";
 import type { WeatherMode } from "./MapView";
 import { apiFetch } from "../lib/api";
 
 const MapView = lazy(() => import("./MapView"));
 
-export type Tab = "flights" | "systems" | "comms" | "atlas" | "search" | "me" | "alerts";
+export type Tab = "flights" | "ground" | "systems" | "comms" | "atlas" | "search" | "me" | "alerts";
 const TABS: Array<[Exclude<Tab, "search" | "me" | "alerts">, string, () => ReturnType<typeof IconFlight>]> = [
   ["flights", "Flights", IconFlight],
+  ["ground", "Ground", IconGround],
   ["systems", "Systems", IconChip],
   ["comms", "Comms", IconInbox],
   ["atlas", "Logbook", IconAtlas],

@@ -103,6 +103,14 @@ export const IconAtlas = () => (
     <path d="M5.8 16c.6-1.6 1.8-2.4 3.2-2.4s2.6.8 3.2 2.4M14 10h4M14 13.5h4" />
   </Svg>
 );
+/** VBuddy Ground: a taxiway with its centreline turning off to a holding point. */
+export const IconGround = () => (
+  <Svg>
+    <path d="M6 21V11a5 5 0 0 1 5-5h10" />
+    <path d="M6 21V11a5 5 0 0 1 5-5h10" strokeDasharray="1.6 2.6" strokeWidth="1" transform="translate(2.6 2.6)" />
+    <path d="M15 3v6M18 3v6" />
+  </Svg>
+);
 export const IconSearch = () => (
   <Svg>
     <circle cx="11" cy="11" r="6.5" />

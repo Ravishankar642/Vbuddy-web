@@ -131,7 +131,7 @@ export function SystemsTab({ b }: { b: BridgeSnapshot }) {
   }, []);
   return (
     <>
-      <Segments<SysSeg> pills value={seg} onChange={setSeg} items={[...SYSTEMS_SECTIONS, ["controls", "Controls"], ["view", "Sim view"], ...(fenix ? ([["efb", "Fenix EFB"]] as Array<[SysSeg, string]>) : []), ...(cdu ? ([["cdu", "CDU"]] as Array<[SysSeg, string]>) : [])]} />
+      <Segments<SysSeg> pills value={seg} onChange={setSeg} items={[...SYSTEMS_SECTIONS, ["controls", "Controls"], ["view", "Sim view"], ...(fenix ? ([["efb", "Fenix EFB"]] as Array<[SysSeg, string]>) : []), ...(cdu ? ([["cdu", b.panel?.cdu?.kind === "mcdu" ? "MCDU" : "CDU"]] as Array<[SysSeg, string]>) : [])]} />
       {seg === "controls" ? <CockpitView b={b} /> : seg === "view" ? <SimView b={b} /> : seg === "efb" ? <EfbView /> : seg === "cdu" ? <CduView b={b} /> : <SystemsView b={b} section={seg} />}
     </>
   );

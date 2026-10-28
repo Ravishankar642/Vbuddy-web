@@ -111,8 +111,11 @@ export const PanelStateSchema = z.object({
     .nullable(),
   /** Short note for the pilot, e.g. "this aircraft ignored the last command". */
   note: z.string().nullable(),
-  /** The aircraft's CDUs that VBuddy can show (PMDG 737: 2, PMDG 777: 3); absent when it has none it can reach. */
-  cdu: z.object({ sides: z.number().int().min(1).max(3) }).nullable().optional(),
+  /**
+   * The aircraft's CDUs / MCDUs that VBuddy can show (PMDG 737: 2, PMDG 777: 3, the Airbus family: 2); absent when it
+   * has none VBuddy can reach. kind "mcdu" = an Airbus MCDU.
+   */
+  cdu: z.object({ sides: z.number().int().min(1).max(3), kind: z.enum(["cdu", "mcdu"]).optional(), name: z.string().max(40).optional() }).nullable().optional(),
   /** Set when the aircraft keeps its cockpit private, so outside commands can't operate it: says why. */
   readOnly: z.string().nullable().optional(),
   /** Aircraft systems and simulator state as the simulator reports it. Absent on older bridges. */

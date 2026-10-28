@@ -231,10 +231,11 @@ export class SimConnectSource implements SimSource {
     if (this.stopped) return;
     let handle: ConnectionHandle;
     let simName: string;
+    let simGen: SimStatus["simGen"];
     try {
-      ({ handle, simName } = await connectSim("VBuddy Bridge", this.target));
+      ({ handle, simName, simGen } = await connectSim("VBuddy Bridge", this.target));
     } catch (e) {
-      this.scheduleRetry(`MSFS not reachable (${errText(e)}).`);
+      this.scheduleRetry(`MSFS 2020 / 2024 not reachable (${errText(e)}).`);
       return;
     }
     if (this.stopped) {
@@ -339,7 +340,7 @@ export class SimConnectSource implements SimSource {
       log.warn(`SimConnect error: ${errText(e)}`);
     });
 
-    this.setStatus({ connected: true, simName, detail: undefined });
+    this.setStatus({ connected: true, simName, simGen, detail: undefined });
     this.emitHandle(handle);
   }
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0
+
+- **Ground: taxi routes from your simulator's scenery.** A new Ground tab reads the airport's taxiways, runways, holding points and stands straight from MSFS (2020 and 2024, add-on airports too) and draws them on the map. Plan a route to a runway or a stand, optionally via the taxiways you were given; VBuddy says it the way ATC would and guides you along it (turn onto, hold short, cross). A taxi clearance heard on the radio or sent by text is offered there with one tap.
+- **ATC to text.** Voice to text turns what ATC says on your radio into text in Comms, on the PC (whisper.cpp, downloaded once from the VBuddy window), with your callsign spotted however it's said; each call can be played back. SayIntentions.AI's conversation shows in Comms with a developer key, and BeyondATC's messages are read from its log (experimental).
+- **MCDUs for the Fenix and the FlyByWire A32NX** (and Headwind A339X), next to the PMDG CDU: Systems → MCDU, both sides, every key, typing into the scratchpad.
+- **MSFS 2020 and MSFS 2024** are told apart (the app shows which one), and both are supported side by side.
+
 ## 1.2.1
 
 - **An iPhone and iPad app** (`ios/`), installed with SideStore, that connects through the cloud relay (scan the phone link QR code in the VBuddy window, or type its ID), so it works on mobile data too: VBuddy full screen, the screen kept on, screenshots saved to Photos through the share sheet, and links opening in Safari. Each release gets an unsigned `.ipa` and a SideStore source built by GitHub; see ios/README.md for setting up SideStore so the app refreshes itself without the PC.

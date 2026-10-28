@@ -9,9 +9,21 @@ export interface Integrations {
   hoppie: string;
   /** OpenWeatherMap API key, for the cloud and rain layers on the map. */
   owm: string;
+  /** SayIntentions.AI developer key (X-Developer-Key), for reading its ATC conversation. */
+  sayintentions: string;
+  /** Read BeyondATC's log for its ATC messages. */
+  beyondatc: boolean;
 }
 
-const EMPTY: Integrations = { simbrief: "", hoppie: "", owm: "" };
+const EMPTY: Integrations = { simbrief: "", hoppie: "", owm: "", sayintentions: "", beyondatc: true };
+
+/** A SayIntentions developer key: letters, digits, dashes. */
+export function cleanSayIntentions(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (s === "") return "";
+  return /^[A-Za-z0-9_-]{8,128}$/.test(s) ? s : null;
+}
 
 /** An OpenWeatherMap key is 32 hex characters. */
 export function cleanOwm(v: unknown): string | null {
@@ -43,7 +55,7 @@ export class IntegrationStore {
     if (!file) return;
     try {
       const j = JSON.parse(readFileSync(file, "utf8")) as Partial<Integrations>;
-      this.value = { simbrief: cleanSimbrief(j.simbrief) ?? "", hoppie: cleanHoppie(j.hoppie) ?? "", owm: cleanOwm(j.owm) ?? "" };
+      this.value = { simbrief: cleanSimbrief(j.simbrief) ?? "", hoppie: cleanHoppie(j.hoppie) ?? "", owm: cleanOwm(j.owm) ?? "", sayintentions: cleanSayIntentions(j.sayintentions) ?? "", beyondatc: j.beyondatc !== false };
     } catch {
       /* first run, or unreadable: start empty */
     }
@@ -54,7 +66,7 @@ export class IntegrationStore {
   }
 
   /** Only the fields present are changed. Returns an error message for a value that can't be right. */
-  set(patch: { simbrief?: unknown; hoppie?: unknown; owm?: unknown }): string | null {
+  set(patch: { simbrief?: unknown; hoppie?: unknown; owm?: unknown; sayintentions?: unknown; beyondatc?: unknown }): string | null {
     const next = { ...this.value };
     if (patch.simbrief !== undefined) {
       const s = cleanSimbrief(patch.simbrief);
@@ -71,6 +83,12 @@ export class IntegrationStore {
       if (o === null) return "The OpenWeatherMap key is letters and digits only.";
       next.owm = o;
     }
+    if (patch.sayintentions !== undefined) {
+      const k = cleanSayIntentions(patch.sayintentions);
+      if (k === null) return "The SayIntentions developer key is letters, digits and dashes only.";
+      next.sayintentions = k;
+    }
+    if (typeof patch.beyondatc === "boolean") next.beyondatc = patch.beyondatc;
     this.value = next;
     this.save();
     return null;

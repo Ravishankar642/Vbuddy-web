@@ -9,13 +9,14 @@ import { LiveFlight } from "./components/LiveFlight";
 import { NotificationsPage, usePushResync } from "./components/NotifyCard";
 import { setThemeCallsign } from "./lib/theme";
 import { BriefView } from "./components/BriefView";
+import { GroundView } from "./components/GroundView";
 import { RatingBadge } from "./components/LandingView";
 import { onAttention, useBridge, useBridgeActions, useNow } from "./lib/useBridge";
 import { ago, coord, fixed, hdg, int, signed, signed1 } from "./lib/format";
 
 const OLD_HASHES: Record<string, Tab> = { flight: "flights", map: "flights", cockpit: "systems", inbox: "comms", brief: "search", landing: "atlas", notifications: "alerts" };
-const TAB_IDS: Tab[] = ["flights", "systems", "comms", "atlas", "search", "me", "alerts"];
-const TITLES: Record<Tab, string> = { flights: "Flights", systems: "Systems", comms: "Comms", atlas: "Logbook", search: "Search", me: "Settings", alerts: "Notifications" };
+const TAB_IDS: Tab[] = ["flights", "ground", "systems", "comms", "atlas", "search", "me", "alerts"];
+const TITLES: Record<Tab, string> = { flights: "Flights", ground: "Ground", systems: "Systems", comms: "Comms", atlas: "Logbook", search: "Search", me: "Settings", alerts: "Notifications" };
 const tabFromHash = (): Tab => {
   const [h = "", seg] = window.location.hash.slice(1).split("/");
   // My flights and Traffic used to be pages of the Flights tab.
@@ -210,6 +211,8 @@ export function App() {
         <PairThisDevice gate />
       ) : tab === "flights" ? (
         live
+      ) : tab === "ground" ? (
+        <GroundView b={b} />
       ) : tab === "systems" ? (
         <SystemsTab b={b} />
       ) : tab === "comms" ? (

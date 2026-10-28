@@ -12,12 +12,21 @@ interface Info {
   pairing: { code: string; expiresAt: number } | null;
   devices: Array<{ id: string; name: string; pairedAt: number; lastSeen: number | null }>;
   relay: { available: boolean; enabled: boolean; state: "off" | "connecting" | "connected"; url: string; shared: boolean; id: string; phoneLink: string; access: "paired" | "open"; error: string };
-  accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean };
+  accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean; sayintentionsSet?: boolean; beyondatc?: boolean };
+  atcApps?: { sayintentions: AppStatus; beyondatc: AppStatus };
+  voice?: {
+    settings: { enabled: boolean; device: string; model: string };
+    status: { state: "off" | "setup" | "starting" | "listening" | "error"; message: string | null; device: string | null; progress: number | null };
+    devices: Array<{ name: string; default: boolean }>;
+    models: Record<string, { mb: number; note: string }>;
+  } | null;
   dataDir: string | null;
   host: { autostart: boolean | null; plugin: { available: boolean; dir: string | null; installed: boolean; upToDate: boolean } | null; canReconnect: boolean };
   update: { current: string; status: { kind: string }; text: string; version: string | null; notes: string | null; url: string | null };
   pause: { schedule: { mode: "atTime"; atEpochMs: number } | { mode: "beforeTod"; leadSec: number }; etaSec: number | null; waiting: string } | null;
 }
+
+interface AppStatus { state: "off" | "waiting" | "live" | "error"; message: string | null }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let info: Info | null = null;
@@ -155,6 +164,10 @@ function render(i: Info) {
   if (document.activeElement !== sb && !accountsDirty) sb.value = i.accounts.simbrief;
   setText($("hoppieState"), i.accounts.hoppieSet ? "A code is saved." : "No code saved.");
   setText($("owmState"), i.accounts.owmSet ? "A key is saved." : "No key saved.");
+  setText($("siState"), (i.accounts.sayintentionsSet ? "A key is saved." : "No key saved.") + (i.atcApps?.sayintentions.message ? ` ${i.atcApps.sayintentions.message}` : ""));
+  $<HTMLInputElement>("batcOn").checked = i.accounts.beyondatc !== false;
+  setText($("batcState"), i.atcApps?.beyondatc.message ?? "");
+  renderVoice(i);
   $<HTMLButtonElement>("clearHoppie").hidden = !i.accounts.hoppieSet;
   setText($("dataDir"), i.dataDir ? `Settings and logs: ${i.dataDir}` : "");
   renderSettings(i);
@@ -205,7 +218,55 @@ function renderSettings(i: Info) {
   }
 }
 
-async function act(name: "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall", body: object = {}): Promise<boolean> {
+/* ---- ATC voice to text ---- */
+const VOICE_SAY: Record<string, string> = { off: "Off.", setup: "Needs the speech engine: press Download and start.", starting: "Starting…", listening: "Listening.", error: "Problem." };
+function renderVoice(i: Info) {
+  const v = i.voice;
+  $("voiceCard").hidden = !v;
+  if (!v) return;
+  const on = $<HTMLInputElement>("voiceOn");
+  if (document.activeElement !== on) on.checked = v.settings.enabled;
+  const dev = $<HTMLSelectElement>("voiceDevice");
+  if (document.activeElement !== dev) {
+    const names = [...new Set([...v.devices.map((d) => d.name), ...(v.settings.device ? [v.settings.device] : [])])];
+    const want = ["", ...names].join("\n");
+    if (dev.dataset.list !== want) {
+      dev.replaceChildren(new Option("Windows' default output", ""), ...names.map((n) => new Option(n + (v.devices.find((d) => d.name === n)?.default ? " (default)" : ""), n)));
+      dev.dataset.list = want;
+    }
+    dev.value = v.settings.device;
+  }
+  const model = $<HTMLSelectElement>("voiceModel");
+  if (document.activeElement !== model) {
+    if (!model.options.length) model.replaceChildren(...Object.entries(v.models).map(([k, m]) => new Option(`${k} (${m.mb} MB, ${m.note})`, k)));
+    model.value = v.settings.model;
+  }
+  const st = v.status;
+  const el = $("voiceStatus");
+  el.className = `status ${st.state === "listening" ? "ok" : st.state === "error" ? "bad" : "muted"}`;
+  setText(el, `${VOICE_SAY[st.state] ?? ""}${st.device && st.state === "listening" ? ` Listening to ${st.device}.` : ""}${st.message ? ` ${st.message}` : ""}`);
+  const prog = $<HTMLProgressElement>("voiceProgress");
+  prog.hidden = st.progress === null;
+  if (st.progress !== null) prog.value = st.progress;
+  $<HTMLButtonElement>("voiceSetup").hidden = !(st.state === "setup" || st.state === "error");
+  setText($("voiceSetup"), st.state === "error" ? "Try again" : "Download and start");
+}
+$<HTMLInputElement>("voiceOn").onchange = (e) => void act("voice", { enabled: (e.target as HTMLInputElement).checked });
+$<HTMLSelectElement>("voiceDevice").onchange = (e) => void act("voice", { device: (e.target as HTMLSelectElement).value });
+$<HTMLSelectElement>("voiceModel").onchange = (e) => void act("voice", { model: (e.target as HTMLSelectElement).value });
+$<HTMLButtonElement>("voiceDevices").onclick = async (e) => {
+  const b = e.target as HTMLButtonElement;
+  b.disabled = true;
+  setText(b, "Looking…");
+  await act("voice", { listDevices: true });
+  b.disabled = false;
+  setText(b, "Find devices");
+  if (lastNote) setText($("voiceStatus"), lastNote);
+};
+$<HTMLButtonElement>("voiceSetup").onclick = () => void act("voice", { enabled: true, download: true });
+$<HTMLInputElement>("batcOn").onchange = (e) => void act("integrations", { beyondatc: (e.target as HTMLInputElement).checked });
+
+async function act(name: "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice", body: object = {}): Promise<boolean> {
   busy = true;
   try {
     const next = await call(`/api/console/${name}`, body);
@@ -235,9 +296,11 @@ function accountsSay(text: string, state: "ok" | "bad" | "muted") {
   s.className = `status ${state}`;
   s.textContent = text;
 }
-for (const id of ["simbrief", "hoppie", "owm"]) $<HTMLInputElement>(id).addEventListener("input", () => (accountsDirty = true));
+for (const id of ["simbrief", "hoppie", "owm", "sikey"]) $<HTMLInputElement>(id).addEventListener("input", () => (accountsDirty = true));
 $<HTMLButtonElement>("saveAccounts").onclick = async () => {
-  const body: { simbrief: string; hoppie?: string; owm?: string } = { simbrief: $<HTMLInputElement>("simbrief").value };
+  const body: { simbrief: string; hoppie?: string; owm?: string; sayintentions?: string } = { simbrief: $<HTMLInputElement>("simbrief").value };
+  const k = $<HTMLInputElement>("sikey").value;
+  if (k.trim() !== "") body.sayintentions = k;
   const h = $<HTMLInputElement>("hoppie").value;
   if (h.trim() !== "") body.hoppie = h;
   const o = $<HTMLInputElement>("owm").value;
@@ -247,6 +310,7 @@ $<HTMLButtonElement>("saveAccounts").onclick = async () => {
     accountsDirty = false;
     $<HTMLInputElement>("hoppie").value = "";
     $<HTMLInputElement>("owm").value = "";
+    $<HTMLInputElement>("sikey").value = "";
     accountsSay("Saved.", "ok");
   } else accountsSay(lastNote || "Couldn't save.", "bad");
 };

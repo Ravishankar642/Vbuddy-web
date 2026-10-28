@@ -6,6 +6,7 @@ import type { BridgeSnapshot } from "../lib/bridge-client";
 import { useBridgeActions } from "../lib/useBridge";
 import { apiFetch } from "../lib/api";
 import { track, type TrackPoint } from "../lib/track";
+import { attachGround } from "./GroundLayer";
 
 /** Weather on the map: off, rain radar, or rain radar plus clouds. */
 export type WeatherMode = "off" | "rain" | "clouds";
@@ -518,6 +519,21 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
       clear();
       mapBus.showRoute = () => {};
     };
+  }, []);
+
+  // VBuddy Ground: the airport chart and the taxi route.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !el.current) return;
+    return attachGround(
+      map,
+      el.current,
+      () => {
+        const i = insetRef.current;
+        return { tl: [24 + i.left, 80], br: [24, 24 + i.bottom] };
+      },
+      () => onFollowRef.current(false),
+    );
   }, []);
 
   useEffect(() => {

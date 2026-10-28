@@ -56,6 +56,10 @@ export const TelemetryFrameSchema = z.object({
 });
 export type TelemetryFrame = z.infer<typeof TelemetryFrameSchema>;
 
+/** The simulators VBuddy talks to through SimConnect. */
+export const SimGenerationSchema = z.enum(["msfs2020", "msfs2024"]);
+export type SimGeneration = z.infer<typeof SimGenerationSchema>;
+
 export const SimStatusSchema = z.object({
   /** Bridge has a live SimConnect connection. */
   connected: z.boolean(),
@@ -66,6 +70,8 @@ export const SimStatusSchema = z.object({
   aircraftTitle: z.string(),
   /** Simulator application name/version as reported by SimConnect, if known. */
   simName: z.string().optional(),
+  /** Which simulator: MSFS 2020 or MSFS 2024 (from the SimConnect handshake). Absent for the test flight and older bridges. */
+  simGen: SimGenerationSchema.optional(),
   /** Human-readable reason when not connected. */
   detail: z.string().optional(),
   /**

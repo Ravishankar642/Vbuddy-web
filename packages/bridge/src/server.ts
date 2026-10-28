@@ -75,6 +75,15 @@ export interface ServerExtras {
   weatherInfo?: (() => { clouds: boolean }) | null;
   /** Airline logos the pilot put in VBuddy's data folder (logos\QTR.png). */
   logosDir?: string | null;
+  /** Recordings of radio transmissions VBuddy transcribed (WAV), by id. */
+  voiceClip?: ((id: string) => Buffer | null) | null;
+  /** Which CDU / MCDU the loaded aircraft has (overrides the panel's own CDU field), and when that changes. */
+  cduInfo?: { info(): import("@vbuddy/protocol").PanelState["cdu"] | null; onInfo(cb: () => void): void } | null;
+  /** Airport taxi layouts (VBuddy Ground), and the airport nearest a position. */
+  ground?: {
+    get(icao: string, refresh?: boolean): Promise<{ chart: unknown; error?: string }>;
+    nearest(lat: number, lon: number): { icao: string; name: string } | null;
+  } | null;
 }
 
 const NETWORK_OFF = { network: "off", state: "off", updatedAt: null, boundaries: false } as const;
@@ -92,7 +101,7 @@ export interface ConsoleHooks {
   /** The latest log lines, for the Activity page. */
   activity(): LogEntry[];
 }
-export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall";
+export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice";
 
 export interface RelayServerOptions {
   /** Random per run; the relay client sends it so requests through the relay can be told from loopback ones. */
@@ -191,8 +200,13 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     if (acars && trusted(c)) send(c.ws, { t: "acarsState", state: acars.state() });
   };
   const sendPanel = (c: Client) => {
-    if (panel) send(c.ws, { t: "panelState", state: panel.state() });
+    if (!panel) return;
+    const st = panel.state();
+    send(c.ws, { t: "panelState", state: opts.cduInfo ? { ...st, cdu: opts.cduInfo.info() } : st });
   };
+  opts.cduInfo?.onInfo(() => {
+    for (const c of clients) sendPanel(c);
+  });
   const sendLegs = (c: Client) => {
     if (legs) send(c.ws, { t: "legs", legs: legs.list() });
   };
@@ -303,7 +317,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       if (!consoleHooks || !isConsoleCaller(req)) return json(res, 404, { error: "not found" });
       if (url === "/api/console" && req.method === "GET") return json(res, 200, consoleHooks.info());
       if (url === "/api/console/activity" && req.method === "GET") return json(res, 200, consoleHooks.activity());
-      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall)$/.exec(url);
+      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall|voice)$/.exec(url);
       if (m && req.method === "POST" && req.headers["x-vbuddy-console"] === "1") {
         let raw = "";
         for await (const chunk of req) {
@@ -366,6 +380,32 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       res.writeHead(200, { "content-type": "image/jpeg", "content-length": String(buf.length), "cache-control": "private, max-age=86400", "content-disposition": `inline; filename="${shotM[1]}"` });
       res.end(buf);
       return;
+    }
+    const clipM = /^\/api\/voice\/clip\/(v\d{1,9})$/.exec(url);
+    if (clipM) {
+      // Radio recordings are for this PC and paired devices, like the conversation itself.
+      const onThisPc = isLocalAddress(req.socket.remoteAddress) && !relayInfo(req).relayed && req.headers["x-forwarded-for"] === undefined;
+      if (!onThisPc && !pairing?.verify(bearer(req))) return json(res, 401, { error: "pair this device first" });
+      const buf = opts.voiceClip?.(clipM[1]!) ?? null;
+      if (!buf) return json(res, 404, { error: "That recording is no longer kept." });
+      res.writeHead(200, { "content-type": "audio/wav", "content-length": String(buf.length), "cache-control": "private, max-age=3600" });
+      res.end(buf);
+      return;
+    }
+    if (url.startsWith("/api/ground/")) {
+      const g = opts.ground;
+      if (!g) return json(res, 404, { error: "Airport layouts aren't available on this bridge." });
+      const u = new URL(url, "http://x");
+      if (u.pathname === "/api/ground/nearest") {
+        const lat = Number(u.searchParams.get("lat"));
+        const lon = Number(u.searchParams.get("lon"));
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json(res, 400, { error: "Give lat and lon." });
+        return json(res, 200, { airport: g.nearest(lat, lon) });
+      }
+      const m = /^\/api\/ground\/([A-Za-z0-9]{3,4})$/.exec(u.pathname);
+      if (!m) return json(res, 404, { error: "not found" });
+      const r = await g.get(m[1]!, u.searchParams.get("refresh") === "1");
+      return json(res, r.chart ? 200 : 404, r);
     }
     if (url === "/api/weather/info") return json(res, 200, opts.weatherInfo?.() ?? { clouds: false });
     const wxM = /^\/api\/weather\/(clouds|precipitation)\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.png$/.exec(url);
