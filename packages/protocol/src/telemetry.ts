@@ -85,6 +85,10 @@ export const SimStatusSchema = z.object({
   vatsimReg: z.string().optional(),
   /** The aircraft's ICAO type as the sim has it (ATC MODEL, e.g. "B788"). */
   atcModel: z.string().optional(),
+  /** The livery's airline as the sim has it (ATC AIRLINE, e.g. "IndiGo", "Qatar", "Speedbird"); "" when it has none. */
+  atcAirline: z.string().optional(),
+  /** The flight number set in the sim (ATC FLIGHT NUMBER, e.g. "612"). */
+  atcFlightNumber: z.string().optional(),
   /** The flight being recorded, while there is one. */
   flight: z
     .object({

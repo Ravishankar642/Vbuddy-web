@@ -9,6 +9,7 @@ import { SystemsSnapshotSchema } from "./systems.js";
 import { AcarsCommandSchema, AcarsStateSchema } from "./acars.js";
 import { AtcAlertSchema, AtcPositionSchema, AtcStationSchema, NetPilotSchema, NetworkIdSchema, NetworkStatusSchema } from "./network.js";
 import { SimStatusSchema, TelemetryFrameSchema } from "./telemetry.js";
+import { TaxiGuideSchema, TaxiRequestSchema } from "./ground.js";
 
 /** Bumped on any breaking change to the wire format. */
 export const PROTOCOL_VERSION = 1;
@@ -169,8 +170,10 @@ export const PushPrefsSchema = z.object({
   atc: z.boolean(),
   /** Touchdown debrief. */
   landing: z.boolean(),
-  /** Direct messages, SELCAL and radio calls that mention your callsign. */
+  /** Direct messages, SELCAL and ACARS. */
   chat: z.boolean(),
+  /** ATC calling your callsign on the radio (text, VBuddy's voice to text, or an AI ATC app). */
+  callsign: z.boolean().default(true),
   /** Connected to / disconnected from VATSIM. */
   vatsim: z.boolean().default(true),
   /** Aircraft alerts: low fuel, engine failure, stall, overspeed, gear up low, high sink rate. */
@@ -201,6 +204,8 @@ export const PushPrefsSchema = z.object({
   planLoaded: z.boolean().default(true),
   /** The simulator paused itself (the "pause later" point, or before the top of descent). */
   paused: z.boolean().default(true),
+  /** Taxi guidance: a turn, a runway crossing or the holding point coming up, and the route ATC gave you. */
+  taxi: z.boolean().default(true),
 });
 export type PushPrefs = z.infer<typeof PushPrefsSchema>;
 
@@ -308,10 +313,19 @@ export const ChaseResultSchema = z.object({ ...base, t: z.literal("chaseResult")
 export const CduMsgSchema = z.object({ ...base, t: z.literal("cdu"), side: z.number().int().min(0).max(2), screen: CduScreenSchema.nullable() });
 export const CduResultSchema = z.object({ ...base, t: z.literal("cduResult"), ok: z.boolean(), error: z.string().max(300).optional() });
 
+/** The taxi route being followed and where you are on it (null = none). Sent after hello and on change (about once a second while taxiing). */
+export const TaxiGuideMsgSchema = z.object({ ...base, t: z.literal("taxiGuide"), guide: TaxiGuideSchema.nullable() });
+/** A taxi guidance note: a turn, a crossing or the holding point coming up, or a new route from ATC. */
+export const TaxiNoticeMsgSchema = z.object({ ...base, t: z.literal("taxiNotice"), notice: z.object({ tag: z.string().max(40), title: z.string().max(120), text: z.string().max(400) }) });
+export const TaxiResultSchema = z.object({ ...base, t: z.literal("taxiResult"), id: z.string().max(40), ok: z.boolean(), error: z.string().max(300).optional() });
+
 /** Why there is or isn't a picture right now. */
 export const SimViewStatusSchema = z.object({ ...base, t: z.literal("simViewStatus"), state: SimViewStateSchema, message: z.string().max(300).optional() });
 
 export const ServerMessageSchema = z.discriminatedUnion("t", [
+  TaxiGuideMsgSchema,
+  TaxiNoticeMsgSchema,
+  TaxiResultSchema,
   FlightEventMsgSchema,
   FlightPlanMsgSchema,
   ScreenshotResultSchema,
@@ -436,6 +450,9 @@ export const CduViewSchema = z.object({ ...base, t: z.literal("cduView"), on: z.
 /** Press a key on a PMDG CDU (paired devices only). */
 export const CduKeyMsgSchema = z.object({ ...base, t: z.literal("cduKey"), side: z.number().int().min(0).max(2), key: CduKeySchema });
 
+/** Plan a taxi route on the bridge (it then follows your aircraft along it), or stop following one. Paired devices. */
+export const TaxiCmdSchema = z.object({ ...base, t: z.literal("taxiCmd"), id: z.string().max(40), cmd: TaxiRequestSchema });
+
 /** Take a full-size screenshot of the simulator window (paired devices). */
 export const ScreenshotCmdSchema = z.object({ ...base, t: z.literal("screenshot"), id: z.string().max(40) });
 /** The app is on screen (true) or in the background (false): notifications are only pushed to devices that aren't looking. */
@@ -445,6 +462,7 @@ export const VisibilitySchema = z.object({ ...base, t: z.literal("visibility"), 
 export const SimViewSchema = z.object({ ...base, t: z.literal("simView"), on: z.boolean() });
 
 export const ClientMessageSchema = z.discriminatedUnion("t", [
+  TaxiCmdSchema,
   ScreenshotCmdSchema,
   VisibilitySchema,
   CduViewSchema,

@@ -19,7 +19,7 @@ export function setChimeEnabled(on: boolean) {
   }
 }
 
-function audio(): AudioContext | null {
+export function audio(): AudioContext | null {
   if (ctx) return ctx;
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AC) return null;

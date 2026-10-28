@@ -13,13 +13,39 @@ import type { Logger } from "../log.js";
  * (another machine with a GPU, say).
  */
 
+/**
+ * The speech models, lightest first (names as whisper.cpp publishes them). The "-q5"/"-q8" ones are quantized: about a
+ * third of the size and noticeably faster for nearly the same accuracy. large-v3-turbo is OpenAI's distilled
+ * large-v3 (4 decoder layers instead of 32): close to the best accuracy at a fraction of the work, which is what
+ * fast, clipped, accented VATSIM radio needs.
+ */
 export const WHISPER_MODELS = {
-  "tiny.en": { file: "ggml-tiny.en.bin", mb: 75, note: "fastest, least accurate" },
-  "base.en": { file: "ggml-base.en.bin", mb: 142, note: "a good balance (recommended)" },
-  "small.en": { file: "ggml-small.en.bin", mb: 466, note: "most accurate, needs a fast CPU" },
+  "tiny.en-q5_1": { file: "ggml-tiny.en-q5_1.bin", mb: 31, note: "fastest, least accurate" },
+  "tiny.en": { file: "ggml-tiny.en.bin", mb: 75, note: "fast, least accurate" },
+  "base.en-q5_1": { file: "ggml-base.en-q5_1.bin", mb: 57, note: "light, for slower PCs" },
+  "base.en": { file: "ggml-base.en.bin", mb: 142, note: "light" },
+  "small.en-q5_1": { file: "ggml-small.en-q5_1.bin", mb: 181, note: "good, easy on most PCs" },
+  "small.en": { file: "ggml-small.en.bin", mb: 466, note: "good" },
+  "medium.en-q5_0": { file: "ggml-medium.en-q5_0.bin", mb: 514, note: "accurate, slower" },
+  "large-v3-turbo-q5_0": { file: "ggml-large-v3-turbo-q5_0.bin", mb: 547, note: "recommended: near-best accuracy, still light" },
+  "large-v3-turbo-q8_0": { file: "ggml-large-v3-turbo-q8_0.bin", mb: 834, note: "a little more accurate than q5, a little slower" },
+  "large-v3-turbo": { file: "ggml-large-v3-turbo.bin", mb: 1624, note: "full size turbo, heavy" },
+  "large-v3-q5_0": { file: "ggml-large-v3-q5_0.bin", mb: 1080, note: "the most accurate, slowest: a strong CPU only" },
 } as const;
+export const RECOMMENDED_MODEL: WhisperModel = "large-v3-turbo-q5_0";
 export type WhisperModel = keyof typeof WHISPER_MODELS;
 export const isWhisperModel = (m: unknown): m is WhisperModel => typeof m === "string" && m in WHISPER_MODELS;
+
+/**
+ * How much of the CPU the speech engine may use while the sim runs. light: 2 threads, below normal priority (the sim
+ * always comes first); balanced: up to 4 threads, below normal; fast: up to 8 threads, normal priority.
+ */
+export type CpuUse = "light" | "balanced" | "fast";
+export const isCpuUse = (c: unknown): c is CpuUse => c === "light" || c === "balanced" || c === "fast";
+export function engineThreads(cpu: CpuUse, cores: number): number {
+  const max = cpu === "light" ? 2 : cpu === "balanced" ? 4 : 8;
+  return Math.max(1, Math.min(max, cores - 2));
+}
 
 /**
  * whisper.cpp's "latest" release (v1.9.5, say) often carries no files: the Windows builds are on the build-numbered
@@ -56,7 +82,7 @@ export interface SpeechEngine {
   status(): EngineStatus;
   onStatus(cb: () => void): void;
   /** Gets the engine ready (downloading what's missing, when allowed). */
-  prepare(model: WhisperModel, download: boolean): Promise<boolean>;
+  prepare(model: WhisperModel, download: boolean, cpu?: CpuUse): Promise<boolean>;
   transcribe(wav: Buffer, prompt: string): Promise<string | null>;
   stop(): void;
 }
@@ -158,8 +184,11 @@ export class WhisperEngine implements SpeechEngine {
     renameSync(tmp, to);
   }
 
-  prepare(model: WhisperModel, download: boolean): Promise<boolean> {
+  private cpu: CpuUse = "balanced";
+  private runningCpu: CpuUse | null = null;
+  prepare(model: WhisperModel, download: boolean, cpu: CpuUse = "balanced"): Promise<boolean> {
     if (this.busy) return this.busy;
+    this.cpu = cpu;
     this.busy = this.doPrepare(model, download).finally(() => (this.busy = null));
     return this.busy;
   }
@@ -169,7 +198,7 @@ export class WhisperEngine implements SpeechEngine {
       this.set({ state: "ready", message: `Using the speech engine at ${this.external}.`, progress: null });
       return true;
     }
-    if (this.proc && this.running === model && this.st.state === "ready") return true;
+    if (this.proc && this.running === model && this.runningCpu === this.cpu && this.st.state === "ready") return true;
     try {
       if (!this.serverExe()) {
         if (!download) {
@@ -230,10 +259,20 @@ export class WhisperEngine implements SpeechEngine {
     this.stop();
     const exe = this.serverExe()!;
     this.set({ state: "starting", message: "Starting the speech engine…", progress: null });
-    const threads = String(Math.max(2, Math.min(8, (await import("node:os")).cpus().length - 2)));
+    const cpu = this.cpu;
+    const threads = String(engineThreads(cpu, (await import("node:os")).cpus().length));
     const p = spawn(exe, ["-m", this.modelFile(model), "--host", "127.0.0.1", "--port", String(PORT), "-l", "en", "-nt", "-t", threads], { windowsHide: true, cwd: join(exe, "..") });
     this.proc = p;
     this.running = model;
+    this.runningCpu = cpu;
+    // Below normal priority, so a busy engine never costs the sim frames (light and balanced).
+    if (cpu !== "fast" && p.pid) {
+      try {
+        (await import("node:os")).setPriority(p.pid, (await import("node:os")).constants.priority.PRIORITY_BELOW_NORMAL);
+      } catch {
+        /* not allowed: normal priority */
+      }
+    }
     let err = "";
     p.stderr?.on("data", (d: Buffer) => (err = (err + d.toString()).slice(-600)));
     p.on("exit", (code) => {
@@ -243,20 +282,21 @@ export class WhisperEngine implements SpeechEngine {
       this.set({ state: "error", message: `The speech engine stopped (code ${code}).${/VCRUNTIME|MSVCP|0xc0000135/i.test(err) ? " Install the Microsoft Visual C++ Redistributable (x64)." : ""}`, progress: null });
     });
     p.on("error", (e) => this.set({ state: "error", message: `The speech engine couldn't start: ${e.message}`, progress: null }));
-    // Ready once it answers HTTP.
-    for (let i = 0; i < 60; i++) {
+    // Ready once it answers HTTP (a big model can take a while to load from disk).
+    const waitS = WHISPER_MODELS[model].mb > 700 ? 120 : 45;
+    for (let i = 0; i < waitS * 2; i++) {
       await new Promise((r) => setTimeout(r, 500));
       if (this.proc !== p) return false;
       try {
         await this.fetchFn(`http://127.0.0.1:${PORT}/`, { signal: AbortSignal.timeout(1000) });
         this.set({ state: "ready", message: null, progress: null });
-        this.log.info(`ATC voice: speech engine ready (whisper.cpp, ${model}, ${threads} threads)`);
+        this.log.info(`ATC voice: speech engine ready (whisper.cpp, ${model}, ${threads} threads, ${cpu} CPU use)`);
         return true;
       } catch {
         /* not up yet */
       }
     }
-    this.set({ state: "error", message: "The speech engine didn't start in 30 s.", progress: null });
+    this.set({ state: "error", message: `The speech engine didn't start in ${waitS} s. Try a smaller model.`, progress: null });
     this.stop();
     return false;
   }
@@ -283,6 +323,7 @@ export class WhisperEngine implements SpeechEngine {
     const p = this.proc;
     this.proc = null;
     this.running = null;
+    this.runningCpu = null;
     if (p) p.kill();
   }
 }

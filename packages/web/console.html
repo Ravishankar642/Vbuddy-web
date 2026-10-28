@@ -150,7 +150,11 @@
             <div class="pausegrid">
               <label class="field"><b>Listen to</b><select class="text" id="voiceDevice"><option value="">Windows' default output</option></select></label>
               <label class="field"><b>Speech model</b><select class="text" id="voiceModel"></select></label>
+              <label class="field"><b>CPU use</b><select class="text" id="voiceCpu"><option value="light">Light: 2 cores, the sim first</option><option value="balanced">Balanced: up to 4 cores (recommended)</option><option value="fast">Fast: up to 8 cores, quickest text</option></select></label>
             </div>
+            <p class="muted" id="voiceAdvice">For VATSIM's fast, clipped radio, <b>large-v3-turbo-q5_0</b> is the one to use: close to the most accurate model at about a sixth of its work, a 547 MB download. If text lags more than a few seconds behind ATC on your PC, step down to <b>small.en-q5_1</b> (181 MB), or set CPU use to Fast. Light and Balanced run the engine below normal priority, so it never takes frames from the sim.</p>
+            <label class="field field--check"><span><input type="checkbox" id="micOn" /> <b>Also what I say (my microphone)</b></span><small class="muted">Your calls to ATC (VATSIM through vPilot, or an AI ATC app) show as yours in Comms. Pick the microphone vPilot uses.</small></label>
+            <label class="field" id="micBox"><b>Microphone</b><select class="text" id="micDevice"><option value="">Windows' default microphone</option></select></label>
             <progress id="voiceProgress" max="1" value="0" hidden></progress>
             <div class="row"><small class="status" id="voiceStatus"></small><span class="actions"><button class="btn" id="voiceDevices" type="button">Find devices</button><button class="btn primary" id="voiceSetup" type="button">Download and start</button></span></div>
           </section>

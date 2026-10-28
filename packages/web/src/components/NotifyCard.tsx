@@ -1,3 +1,4 @@
+import { setTaxiScreenPrefs, useTaxiScreenPrefs } from "../lib/taxi-prefs";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { PushPrefs } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
@@ -146,6 +147,7 @@ export function NotificationsPage({ b }: { b: BridgeSnapshot }) {
         )}
       </section>
 
+      <TaxiScreenCard />
       {(
         <div className={off ? "notify__dim" : undefined} aria-disabled={off}>
           <Group title="Your flight">
@@ -157,11 +159,15 @@ export function NotificationsPage({ b }: { b: BridgeSnapshot }) {
             {sw("landing", "Touchdown", "Rate, G and the rating.")}
             {sw("gate", "At the gate", "Parked, parking brake set, engines off.")}
           </Group>
+          <Group title="Taxi">
+            {sw("taxi", "Taxi guidance", "A turn, a runway crossing or the holding point coming up, and the route ATC gave you.")}
+          </Group>
           <Group title="ATC and VATSIM">
             {sw("atc", "New controller and boundaries", "Who to contact next, and leaving ATC coverage.")}
             <Pick label="Boundary warning" value={p.prefs.atcAheadNm} options={[10, 20, 30, 40, 60, 80, 100, 150]} render={(v) => `${v} nm ahead`} disabled={off || !p.prefs.atc} onChange={(v) => set("atcAheadNm", v)} />
             <Pick label="Boundary notices" value={p.prefs.atcPerHour} options={[0, 2, 3, 5, 10, 20]} render={(v) => (v === 0 ? "No limit" : `At most ${v} an hour`)} disabled={off || !p.prefs.atc} onChange={(v) => set("atcPerHour", v)} />
-            {sw("chat", "Messages", "Private messages, SELCAL, calls with your callsign, ACARS.")}
+            {sw("callsign", "ATC calls you", "When ATC says your callsign on the radio: VATSIM text, VBuddy's voice to text, SayIntentions or BeyondATC.")}
+            {sw("chat", "Messages", "Private messages, SELCAL and ACARS.")}
             {sw("vatsim", "VATSIM connected or disconnected")}
             {sw("planLoaded", "Flight plan loaded", "Your SimBrief plan, when you connect to VATSIM.")}
           </Group>
@@ -175,6 +181,18 @@ export function NotificationsPage({ b }: { b: BridgeSnapshot }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Taxi guidance while VBuddy is open on this device (notifications when it's closed are with the others below). */
+function TaxiScreenCard() {
+  const p = useTaxiScreenPrefs();
+  return (
+    <section className="card">
+      <h2 className="card__title">Taxi guidance on this screen</h2>
+      <Toggle label="Banner on the Flights tab" hint="The next turn or holding point and how far, at the top of the screen while you taxi on a route." on={p.banner} disabled={false} onChange={(v) => setTaxiScreenPrefs({ banner: v })} />
+      <Toggle label="Notes in the app" hint="A short note, with a chime, as each turn comes up and when ATC's taxi clearance becomes the route." on={p.notes} disabled={false} onChange={(v) => setTaxiScreenPrefs({ notes: v })} />
+    </section>
   );
 }
 

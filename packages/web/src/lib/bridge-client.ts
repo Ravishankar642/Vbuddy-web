@@ -5,6 +5,8 @@ import {
   summarize,
   WS_PATH,
   type AtcAlert,
+  type TaxiGuide,
+  type TaxiRequest,
   type SimViewState,
   type CduScreen,
   type ChaseCommand,
@@ -113,6 +115,10 @@ export interface BridgeSnapshot {
   newLanding: LandingSummary | null;
   /** The SimBrief plan for the flight in progress (or the latest one). Null = none. */
   plan: FlightPlanInfo | null;
+  /** The taxi route the bridge is following, and where you are on it (null = none). */
+  taxi: TaxiGuide | null;
+  /** The latest taxi note (a turn or crossing coming up, a new route from ATC), until dismissed. */
+  taxiNotice: { tag: string; title: string; text: string; receivedAt: number } | null;
   /** The latest flight milestone (takeoff, top of climb…) not yet dismissed. */
   flightEvent: (FlightEvent & { receivedAt: number }) | null;
 }
@@ -217,6 +223,7 @@ export class BridgeClient {
   private pendingChase = new Map<string, { done: (r: ChaseReply) => void; timer: number }>();
   private pendingShot = new Map<string, { done: (r: ShotReply) => void; timer: number }>();
   private pendingLeg = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
+  private pendingTaxi = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private readAt: Record<string, number> = loadReadAt();
   /** This device's clock minus the PC's (ms), from the last live frame. */
   private clockOffset: number | null = null;
@@ -261,6 +268,8 @@ export class BridgeClient {
     details: {},
     newLanding: null,
     plan: null,
+    taxi: null,
+    taxiNotice: null,
     flightEvent: null,
   };
   private seenLandings = new Set<string>();
@@ -407,6 +416,22 @@ export class BridgeClient {
       this.pendingShot.set(id, { done, timer });
       this.send({ t: "screenshot", id });
     });
+  };
+  /** Plans a taxi route on the bridge (which then guides you along it), or stops following one. */
+  taxiCommand = (cmd: TaxiRequest): Promise<CmdReply> => {
+    if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
+    const id = `t${++this.cmdSeq}`;
+    return new Promise((done) => {
+      const timer = window.setTimeout(() => {
+        this.pendingTaxi.delete(id);
+        done({ ok: false, error: "No answer from the bridge." });
+      }, CMD_TIMEOUT_MS);
+      this.pendingTaxi.set(id, { done, timer });
+      this.send({ t: "taxiCmd", id, cmd });
+    });
+  };
+  dismissTaxiNotice = () => {
+    if (this.snap.taxiNotice) this.update({ taxiNotice: null });
   };
   /** Adds, changes or deletes a planned flight. */
   legCommand = (cmd: LegCommand): Promise<CmdReply> => {
@@ -613,6 +638,11 @@ export class BridgeClient {
         p.done({ ok: false, error: "Lost the connection to the bridge." });
       }
       this.pendingLeg.clear();
+      for (const [, p] of this.pendingTaxi) {
+        clearTimeout(p.timer);
+        p.done({ ok: false, error: "Lost the connection to the bridge." });
+      }
+      this.pendingTaxi.clear();
       if (!this.stopped) this.scheduleRetry();
     };
     ws.onerror = () => {
@@ -786,6 +816,21 @@ export class BridgeClient {
       case "legs":
         this.update({ legs: m.legs });
         break;
+      case "taxiGuide":
+        this.update({ taxi: m.guide });
+        break;
+      case "taxiNotice":
+        this.update({ taxiNotice: { ...m.notice, receivedAt: Date.now() } });
+        break;
+      case "taxiResult": {
+        const p = this.pendingTaxi.get(m.id);
+        if (p) {
+          clearTimeout(p.timer);
+          this.pendingTaxi.delete(m.id);
+          p.done(m.ok ? { ok: true } : { ok: false, error: m.error ?? "That didn't work." });
+        }
+        break;
+      }
       case "legResult": {
         const p = this.pendingLeg.get(m.id);
         if (p) {

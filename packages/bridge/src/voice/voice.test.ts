@@ -129,7 +129,7 @@ test("voice to text: off until switched on and set up, then each transmission be
   assert.ok(v.clip(msg.clip!)!.length > 44);
   // Settings survive a restart.
   const again = new VoiceService(new FakeAudio(), new FakeEngine(), join(dir, "voice.json"), log);
-  assert.deepEqual(again.settings(), { enabled: true, device: "Headset", model: "base.en" });
+  assert.deepEqual(again.settings(), { enabled: true, device: "Headset", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" });
   await v.configure({ enabled: false });
   assert.equal(a.started, null);
 });
@@ -221,4 +221,34 @@ test("the speech engine comes from the newest release that has the Windows build
   assert.equal(pickBinUrl(rel), "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip");
   assert.equal(pickBinUrl([{ draft: false, assets: [] }]), null);
   assert.equal(pickBinUrl({ message: "rate limited" }), null);
+});
+
+test("your side too: with the microphone on, what you say becomes an outgoing message", async () => {
+  const a = new FakeAudio();
+  const mic = new FakeAudio();
+  const e = new FakeEngine();
+  e.st = { state: "ready", message: null, progress: null };
+  const v = new VoiceService(a, e, null, log, () => "BAW123", mic);
+  await v.configure({ enabled: true, micEnabled: true, micDevice: "Headset Mic" });
+  assert.equal(mic.started, "Headset Mic");
+  const got: Array<"in" | "out"> = [];
+  v.onTranscript((t) => got.push(t.dir));
+  mic.feed!(audio(5, [[1, 2.5]]), Date.now());
+  for (let i = 0; i < 20 && !got.length; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(got, ["out"]);
+  const comms = new CommsService(new MockRadios(), log);
+  const m = comms.addExternal({ source: "voice", dir: "out", text: "Ground, Speedbird 123 request taxi", from: "BAW123" });
+  assert.equal(m.dir, "out");
+  assert.equal(m.attention, false);
+  await v.configure({ micEnabled: false });
+  assert.equal(mic.started, null);
+});
+
+test("engine threads follow the CPU setting and leave the sim two cores", async () => {
+  const { engineThreads } = await import("./whisper.js");
+  assert.equal(engineThreads("light", 16), 2);
+  assert.equal(engineThreads("balanced", 16), 4);
+  assert.equal(engineThreads("fast", 16), 8);
+  assert.equal(engineThreads("fast", 6), 4);
+  assert.equal(engineThreads("balanced", 2), 1);
 });

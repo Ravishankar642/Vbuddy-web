@@ -90,3 +90,35 @@ export function repairFlights(db: FlightDb, log: Logger | null, force = false): 
   }
   return report;
 }
+
+/**
+ * Flights recorded by 2.0.0 and older could lose their SimBrief plan: when a flight began with a short stretch (a
+ * respawn, a move to another gate), the plan was tied to that stretch, which was then hidden, and the real flight that
+ * followed got nothing. The plan is moved to the next flight when it began within the hour, near where the stretch
+ * began, and has no plan of its own. Runs once per database (meta "repair-plans-1").
+ */
+export function repairPlans(db: FlightDb, log: Logger | null, force = false): number {
+  const KEY2 = "repair-plans-1";
+  if (!force && db.getMeta(KEY2)) return 0;
+  const flights = db.allFlights().sort((a, b) => a.startedAt - b.startedAt);
+  let moved = 0;
+  for (let i = 0; i < flights.length; i++) {
+    const h = flights[i]!;
+    if (!h.hidden || !h.planDep || !h.planArr) continue;
+    for (let j = i + 1; j < flights.length; j++) {
+      const f = flights[j]!;
+      if (f.startedAt - h.endedAt > 3_600_000) break;
+      if (f.hidden) continue;
+      if (f.planDep) break;
+      const near = h.startLat === null || h.startLon === null || f.startLat === null || f.startLon === null || nm(h.startLat, h.startLon, f.startLat, f.startLon) < 8;
+      if (!near) break;
+      db.setFlightPlan(f.id, h.planDep, h.planArr, { callsign: h.planCallsign ?? null, route: h.planRoute ?? null, distanceNm: h.planDistanceNm ?? null, eteMin: h.planEteMin ?? null, ofpId: h.planOfpId ?? null });
+      f.planDep = h.planDep;
+      moved++;
+      break;
+    }
+  }
+  db.setMeta(KEY2, String(Date.now()));
+  if (moved) log?.info(`Gave ${moved} flight(s) back the SimBrief plan a short stretch before them had taken.`);
+  return moved;
+}

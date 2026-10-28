@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { GroundChart, TaxiPlan } from "@vbuddy/protocol";
+import type { GroundChart, TaxiGuide, TaxiPlan } from "@vbuddy/protocol";
 import { apiFetch } from "./api";
 
 /**
@@ -17,6 +17,9 @@ export interface GroundState {
   /** Bumped when the map should fit the airport (a new chart, or "show on map"). */
   fitSeq: number;
 }
+
+/** The bridge's route last followed (its setAt), so the map fits a new one once. */
+let followedAt = 0;
 
 let st: GroundState = { icao: null, chart: null, loading: false, error: null, plan: null, show: true, fitSeq: 0 };
 const subs = new Set<() => void>();
@@ -57,6 +60,24 @@ export const ground = {
     } catch {
       return null;
     }
+  },
+  /**
+   * The route the bridge is following: shown on the map (its airport loaded if it isn't), and the map fits it
+   * when it is new. When the bridge stops following one, it goes from the map too.
+   */
+  follow(g: TaxiGuide | null) {
+    if (!g) {
+      if (followedAt) {
+        followedAt = 0;
+        set({ plan: null });
+      }
+      return;
+    }
+    const isNew = g.setAt !== followedAt;
+    followedAt = g.setAt;
+    if (st.chart?.icao !== g.icao && st.icao !== g.icao) void ground.load(g.icao);
+    // Progress updates every second carry the same route: only a new one is drawn (and fitted).
+    if (isNew || !st.plan) set({ plan: g.plan, show: true, fitSeq: st.fitSeq + 1 });
   },
   setPlan(plan: TaxiPlan | null) {
     set({ plan });

@@ -62,6 +62,8 @@ export interface PlanSource {
  */
 export class PlanTracker {
   private cur: FlightPlanInfo | null = null;
+  /** The plan just flown: not shown again when SimBrief still has it as the latest, until a new one is made. */
+  private flown: string | null = null;
   private cbs: Array<(p: FlightPlanInfo | null, why: string) => void> = [];
 
   constructor(
@@ -87,6 +89,7 @@ export class PlanTracker {
       this.log.warn(`Couldn't load the SimBrief plan: ${(e as Error).message}`);
     }
     if (!m) return this.cur;
+    if (this.flown && m.ofp.ofpId === this.flown) return null;
     const next = planInfo(m, start, this.now(), this.airportPos);
     const changed = !this.cur || this.cur.ofpId !== next.ofpId || this.cur.matched !== next.matched || this.cur.dep !== next.dep || this.cur.arr !== next.arr;
     this.cur = next;
@@ -95,6 +98,15 @@ export class PlanTracker {
       for (const cb of this.cbs) cb(next, why);
     }
     return next;
+  }
+
+  /** The flight on this plan is over (parked, engines off): stop showing it, and don't bring it back. */
+  done() {
+    if (!this.cur) return;
+    this.flown = this.cur.ofpId ?? null;
+    this.log.info(`SimBrief plan ${this.cur.callsign ?? ""} ${this.cur.dep}-${this.cur.arr} flown: no longer shown`.replace(/\s+/g, " "));
+    this.cur = null;
+    for (const cb of this.cbs) cb(null, "flown");
   }
 
   /** A new flight began: whatever plan was shown is checked against it again. */

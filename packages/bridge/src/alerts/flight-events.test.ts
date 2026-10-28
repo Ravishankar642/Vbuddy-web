@@ -36,6 +36,41 @@ test("plan tracker: says when a new plan arrives, not when the same one is loade
   assert.deepEqual(seen, ["vatsim:1:false", "vatsim:2:true"]);
 });
 
+test("plan tracker: a flown plan leaves the app and doesn't come back until SimBrief has a new one", async () => {
+  let plan = ofp();
+  const t = new PlanTracker({ plan: async () => plan }, logger("test"));
+  const seen: string[] = [];
+  t.onChange((p, why) => seen.push(`${why}:${p?.ofpId ?? "none"}`));
+  await t.refresh("vatsim", null);
+  t.done();
+  assert.equal(t.current(), null);
+  assert.equal(await t.refresh("timer", null), null);
+  plan = ofp("VOBL", "VOMM", "2");
+  await t.refresh("flight-start", { lat: 12.99, lon: 80.17, airborne: false });
+  assert.deepEqual(seen, ["vatsim:1", "flown:none", "flight-start:2"]);
+});
+
+test("repair: a plan a short hidden stretch took goes back to the flight after it", async () => {
+  const { FlightDb } = await import("../db/flight-db.js");
+  const { repairPlans } = await import("../db/repair.js");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const db = (await FlightDb.open(join(mkdtempSync(join(tmpdir(), "vb-rp-")), "f.db"), logger("test")))!;
+  const at = Date.parse("2026-10-27T09:19:00Z");
+  const mk = (start: number) => db.openFlight({ sessionId: "s", startedAt: start, source: "simconnect", aircraft: "FenixA321", firstSeq: 0, lat: 24.43, lon: 54.65 });
+  const short = mk(at);
+  const real = mk(at + 120_000);
+  db.setFlightPlan(short, "OMAA", "VOMM", { callsign: "ETD8KU", route: "DCT", distanceNm: 1500, eteMin: 220, ofpId: "191345040" });
+  db.hideFlight(short);
+  assert.equal(repairPlans(db, null), 1);
+  const f = db.allFlights().find((x) => x.id === real)!;
+  assert.equal(f.planDep, "OMAA");
+  assert.equal(f.planCallsign, "ETD8KU");
+  assert.equal(repairPlans(db, null), 0, "runs once");
+  db.close();
+});
+
 test("events: takeoff, 10,000 ft both ways, top of climb, near the destination and at the gate, each once", () => {
   const e = new FlightEvents();
   e.setPlan({ arr: "VGHS", arrLat: 23.84, arrLon: 90.4, cruiseFt: 36000 });

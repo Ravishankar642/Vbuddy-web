@@ -7,9 +7,14 @@ import { AtlasTab, CommsTab, MeTab, SystemsTab } from "./components/Pages";
 import { Shell, type Tab } from "./components/Shell";
 import { LiveFlight } from "./components/LiveFlight";
 import { NotificationsPage, usePushResync } from "./components/NotifyCard";
-import { setThemeCallsign } from "./lib/theme";
+import { setThemeAirline } from "./lib/theme";
+import { flightIdentity } from "./lib/identity";
 import { BriefView } from "./components/BriefView";
 import { GroundView } from "./components/GroundView";
+import { TaxiBanner } from "./components/TaxiBanner";
+import { ground } from "./lib/ground";
+import { useTaxiScreenPrefs } from "./lib/taxi-prefs";
+import { feedAutoPlay } from "./lib/atc-audio";
 import { RatingBadge } from "./components/LandingView";
 import { onAttention, useBridge, useBridgeActions, useNow } from "./lib/useBridge";
 import { ago, coord, fixed, hdg, int, signed, signed1 } from "./lib/format";
@@ -44,7 +49,8 @@ const FLIGHT_ALERT_MS = 30_000;
 
 export function App() {
   const b = useBridge();
-  const { dismissNewLanding, dismissAtcAlert, dismissFlightAlert, dismissFlightEvent, dismissAttention } = useBridgeActions();
+  const { dismissNewLanding, dismissAtcAlert, dismissFlightAlert, dismissFlightEvent, dismissAttention, dismissTaxiNotice } = useBridgeActions();
+  const taxiPrefs = useTaxiScreenPrefs();
   const [tab, setTab] = useTab();
   const now = useNow(500);
   const t = b.latest?.data ?? null;
@@ -77,11 +83,13 @@ export function App() {
     }
   }, [b.attentionUnread]);
   const msgToast = tab === "comms" ? null : b.lastAttention;
+  // ATC recordings played as they arrive, when switched on (Comms › Messages).
+  useEffect(() => feedAutoPlay(b.chat), [b.chat]);
 
-  // The app takes on the colours of the airline you're connected to VATSIM as.
+  // The app takes on the colours of the airline you're flying as: on the network, in the plan, or the sim's livery.
   usePushResync(b);
-  const vatsimCallsign = b.comms?.net.connected ? b.comms.net.callsign : null;
-  useEffect(() => setThemeCallsign(vatsimCallsign), [vatsimCallsign]);
+  const themeIcao = flightIdentity(b).airline?.icao ?? null;
+  useEffect(() => setThemeAirline(themeIcao), [themeIcao]);
 
   // Takeoff, top of climb, the plan loaded and so on: a short note.
   const flightEvent = b.flightEvent;
@@ -95,6 +103,18 @@ export function App() {
     const id = setTimeout(dismissAttention, 15_000);
     return () => clearTimeout(id);
   }, [msgToast, dismissAttention]);
+
+  // The bridge's taxi route is drawn on the map on every device.
+  useEffect(() => ground.follow(b.taxi), [b.taxi]);
+  // Taxi notes: shown for a few seconds (the Flights tab's banner keeps the next instruction on screen).
+  const taxiNotice = taxiPrefs.notes ? b.taxiNotice : null;
+  useEffect(() => {
+    if (!taxiNotice) return;
+    void playChime();
+    const id = setTimeout(dismissTaxiNotice, 9000);
+    return () => clearTimeout(id);
+  }, [taxiNotice, dismissTaxiNotice]);
+  const showTaxiBar = tab === "flights" && taxiPrefs.banner && !!b.taxi?.progress?.next && !!t?.onGround;
 
   const atcAlert = b.atcAlert;
   useEffect(() => {
@@ -116,6 +136,26 @@ export function App() {
   const overlay = (
     <>
       <UpdateBanner />
+      {showTaxiBar && <TaxiBanner g={b.taxi!} onOpen={() => setTab("ground")} />}
+      {taxiNotice && !(showTaxiBar && taxiNotice.tag === "next") && (
+        <div className="toast toast--event" role="status" aria-live="polite">
+          <span className="toast__icon" aria-hidden="true">
+            ⤷
+          </span>
+          <span className="toast__text">
+            <b>{taxiNotice.title}</b>
+            <span>{taxiNotice.text}</span>
+          </span>
+          {tab !== "ground" && (
+            <button type="button" className="btn btn--primary" onClick={() => { dismissTaxiNotice(); setTab("ground"); }}>
+              Open
+            </button>
+          )}
+          <button type="button" className="btn btn--ghost" aria-label="Dismiss" onClick={dismissTaxiNotice}>
+            ✕
+          </button>
+        </div>
+      )}
       {flightAlert && (
         <div className={`toast toast--${flightAlert.severity}`} role="alert">
           <span className="toast__icon" aria-hidden="true">
@@ -164,10 +204,10 @@ export function App() {
             ✉
           </span>
           <span className="toast__text">
-            <b>{msgToast.kind === "private" ? `Message from ${msgToast.from}` : msgToast.from}</b>
+            <b>{msgToast.kind === "private" ? `Message from ${msgToast.from}` : msgToast.kind === "radio" ? `ATC is calling you · ${msgToast.from}` : msgToast.from}</b>
             <span>{msgToast.text.length > 90 ? msgToast.text.slice(0, 90) + "…" : msgToast.text}</span>
           </span>
-          <button type="button" className="btn btn--primary" onClick={() => { dismissAttention(); setTab("comms"); }}>
+          <button type="button" className="btn btn--primary" onClick={() => { dismissAttention(); window.location.hash = "#comms/messages"; }}>
             Open
           </button>
           <button type="button" className="btn btn--ghost" aria-label="Dismiss" onClick={dismissAttention}>

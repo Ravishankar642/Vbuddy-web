@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isTaxiClearance, metresBetween, parseTaxiClearance, planTaxi, taxiProgress, type GroundChart, type TaxiFrom, type TaxiTo } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { ground, useGround } from "../lib/ground";
+import { useBridgeActions } from "../lib/useBridge";
 import { mapBus } from "../lib/mapbus";
 
 /** Taxi speed used for the time estimate. */
@@ -29,6 +30,9 @@ function nearAirport(c: GroundChart, lat: number, lon: number) {
 /** VBuddy Ground: the airport's layout from the simulator, a taxi route, and turn-by-turn guidance along it. */
 export function GroundView({ b }: { b: BridgeSnapshot }) {
   const g = useGround();
+  const { taxiCommand } = useBridgeActions();
+  /** Paired devices (and this PC) have the bridge follow the route and guide them; others see a preview only. */
+  const guided = !!b.control?.allowed && b.link === "open";
   const t = b.latest?.data ?? null;
   const [icao, setIcao] = useState(g.icao ?? "");
   const [destKind, setDestKind] = useState<"runway" | "parking">("runway");
@@ -87,7 +91,16 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
       setErr(destKind === "runway" ? "Pick a runway." : "Pick a stand.");
       return;
     }
-    const r = planTaxi(chart, from, to, over?.via ?? via.split(/[\s,]+/).filter(Boolean));
+    const viaList = over?.via ?? via.split(/[\s,]+/).filter(Boolean);
+    if (guided) {
+      // The bridge plans it from where the aircraft is (or the stand) and guides you along it on every device.
+      void taxiCommand({ op: "plan", icao: chart.icao, to, via: viaList.slice(0, 20).map((v) => v.slice(0, 8)), ...(from.kind === "parking" ? { fromStand: from.index } : {}) }).then((r) => {
+        if (!r.ok) setErr(r.error);
+        else mapBus.lowerSheet();
+      });
+      return;
+    }
+    const r = planTaxi(chart, from, to, viaList);
     if (!r.ok) {
       setErr(r.error);
       ground.setPlan(null);
@@ -96,6 +109,10 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
     ground.setPlan(r);
     ground.fit();
     mapBus.lowerSheet();
+  };
+  const clearRoute = () => {
+    if (b.taxi && guided) void taxiCommand({ op: "clear" });
+    else ground.setPlan(null);
   };
 
   /** Fill the form from a clearance (spoken or typed) and plan it. */
@@ -128,7 +145,8 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
     plan({ to, via: v });
   };
 
-  const prog = g.plan && t ? taxiProgress(g.plan, t.lat, t.lon) : null;
+  const route = b.taxi?.plan ?? g.plan;
+  const prog = b.taxi?.progress ?? (g.plan && t ? taxiProgress(g.plan, t.lat, t.lon) : null);
   // Only on the ground and still at the airport: airborne, or kilometres away, the route simply doesn't apply.
   const offRoute = !!(prog && t?.onGround && prog.offRouteM > 40 && prog.offRouteM < 3000);
   const tracking = !!(prog && t?.onGround && !offRoute);
@@ -198,8 +216,8 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
                 : prog.next.what === "cross"
                   ? `Hold short of runway ${prog.next.name}`
                   : prog.next.what === "hold"
-                    ? `Hold short: ${g.plan?.destination}`
-                    : `Arriving at ${g.plan?.destination}`}
+                    ? `Hold short: ${route?.destination}`
+                    : `Arriving at ${route?.destination}`}
             </b>
             <span className="gnd__in">in {fmtDist(prog.next.inM)}</span>
             <small className="muted">
@@ -208,7 +226,7 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
           </div>
         </section>
       )}
-      {offRoute && g.plan && (
+      {offRoute && route && (
         <section className="card gnd__off" role="alert">
           <b>Off the planned route</b> ({fmtDist(prog!.offRouteM)} away).
           <button type="button" className="btn" onClick={() => plan({ fromHere: true })}>
@@ -309,19 +327,21 @@ export function GroundView({ b }: { b: BridgeSnapshot }) {
               {err}
             </p>
           )}
-          {g.plan && (
+          {route && (
             <div className="gnd__plan">
-              <p className="gnd__text">{g.plan.text}</p>
+              {b.taxi?.source === "atc" && <p className="gnd__from">From {b.taxi.from ?? "ATC"}'s clearance</p>}
+              <p className="gnd__text">{route.text}</p>
               <p className="muted">
-                {fmtDist(g.plan.distanceM)} · about {fmtMin(g.plan.distanceM)} at 15 kt
-                {g.plan.crossings.length > 0 && <> · {g.plan.crossings.length} runway crossing{g.plan.crossings.length > 1 ? "s" : ""}</>}
+                {fmtDist(route.distanceM)} · about {fmtMin(route.distanceM)} at 15 kt
+                {route.crossings.length > 0 && <> · {route.crossings.length} runway crossing{route.crossings.length > 1 ? "s" : ""}</>}
+                {b.taxi ? " · VBuddy guides you along it" : guided ? "" : " · pair this device to be guided along it"}
               </p>
-              {g.plan.unmatched.length > 0 && <p className="setval__err">Not found in the layout: {g.plan.unmatched.join(", ")}. The route takes the nearest way instead.</p>}
+              {route.unmatched.length > 0 && <p className="setval__err">Not found in the layout: {route.unmatched.join(", ")}. The route takes the nearest way instead.</p>}
               <div className="chips">
                 <button type="button" className="btn" onClick={() => ground.fit()}>
                   Show on map
                 </button>
-                <button type="button" className="btn btn--ghost" onClick={() => ground.setPlan(null)}>
+                <button type="button" className="btn btn--ghost" onClick={clearRoute}>
                   Clear
                 </button>
               </div>

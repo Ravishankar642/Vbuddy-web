@@ -41,6 +41,8 @@ export class MockSource implements SimSource {
     aircraftTitle: "VBuddy Mock A320",
     atcId: "A7-VBD",
     atcModel: "A20N",
+    atcAirline: "IndiGo",
+    atcFlightNumber: "612",
     simName: "VBuddy mock flight",
   };
 

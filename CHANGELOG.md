@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.1.0
+
+- **Taxi guidance that follows you.** The route is now worked out on the PC, so every device shows the same one. On the Flights tab a banner at the top gives the next instruction ("Turn left onto N2 in 720 m"). Short notes pop up for each turn, crossing and hold short, and a notification reaches your phone when the app is closed. Leave the route and VBuddy re-plans it from where you are, and the route clears itself after takeoff or once you're parked. Turn the banner, the notes and the notification on or off under Notifications → Taxi.
+- **Taxi routes straight from ATC.** When a controller gives you a taxi clearance, VBuddy plans the route on its own. It works with VATSIM text, voice to text, SayIntentions or BeyondATC.
+- **Your own side of the radio.** Voice to text can also listen to your microphone, so your calls to ATC (on VATSIM through vPilot, or to an AI ATC app) show in Comms next to the controller's.
+- **ATC is calling you.** When ATC says your callsign, you get an alert in the app and a notification on your phone. It has its own switch under Notifications, and it works off VATSIM too: the callsign can come from your SimBrief plan or from the sim's livery.
+- **Hear ATC without pressing play.** Comms → Messages → *Hear ATC here* plays each transmission as it arrives on your phone or tablet: all of them, or only the calls for you.
+- **Comms has three pages:** Radio, Messages and ACARS.
+- **More speech models, and a recommendation.** You can now pick from every whisper.cpp model, including the quantized ones. The new default, **large-v3-turbo-q5_0** (547 MB), is close to the most accurate model at a fraction of its work, which helps with fast, clipped VATSIM radio. A new *CPU use* setting (light, balanced or fast) decides how many cores the engine takes. On light and balanced it runs below normal priority, so the sim keeps its frames.
+- **Your airline without a flight plan.** With no VATSIM callsign or SimBrief plan, VBuddy works out your airline from the sim: the livery's airline and flight number ("IndiGo 612"), or an airline named in the aircraft's title. The app's colours, the logo and the callsign all follow it.
+- **App colours follow the airline you're flying as.** That's your network callsign, else your SimBrief plan, else the sim. They used to follow the VATSIM callsign only.
+- **About 120 more airlines** have colours and logos, including easyJet Europe and Switzerland, Ryanair UK, Buzz, Lauda, Malta Air, Wizz Air UK, Malta and Abu Dhabi, Discover, Marabu, Riyadh Air, SalamAir, Thai AirAsia, AirAsia X, HK Express, Air Busan, Air Seoul, ZIPAIR, Air Premia, QantasLink, GoJet, CommuteAir, Arajet, Cargojet and Polar.
+- **Logbook: the SimBrief plan goes with the right flight.** A plan sometimes attached itself to a short fragment of a flight that the logbook hides, so the flight you actually flew had no plan. Your older flights are fixed once, automatically.
+- **The SimBrief plan leaves the Flights tab once the flight is over:** parked at the gate with the engines off. A new plan loads for your next flight.
+- **Sim view full screen works on iPhone and inside the VBuddy window.** Where the browser won't go full screen, the view fills the app instead, with a close button.
+
 ## 2.0.1
 
 - **ATC voice to text: the speech engine downloads again.** whisper.cpp's newest release has no files, so VBuddy now takes the newest one that includes the Windows build.

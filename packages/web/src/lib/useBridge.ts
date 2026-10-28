@@ -41,6 +41,8 @@ export function useBridgeActions() {
     panelCommand: c.panelCommand,
     chaseCommand: c.chaseCommand,
     legCommand: c.legCommand,
+    taxiCommand: c.taxiCommand,
+    dismissTaxiNotice: c.dismissTaxiNotice,
     markRead: c.markRead,
     dismissAttention: c.dismissAttention,
   };

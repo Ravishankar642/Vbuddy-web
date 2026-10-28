@@ -103,7 +103,7 @@ const ahead = (distNm: number, cs = "VABB_APP", etaSec = 300): AtcPosition => ({
 
 test("push: older saved choices get the new defaults", () => {
   const p = withDefaults({ atc: false, landing: true, chat: true } as never);
-  assert.deepEqual(p, { atc: false, landing: true, chat: true, vatsim: true, alerts: true, todMin: 10, fuelMin: 30, atcAheadNm: 40, atcPerHour: 0, apOff: false, takeoff: true, toc: true, tenK: false, approachMin: 0, gate: true, simLost: true, planLoaded: true, paused: true });
+  assert.deepEqual(p, { atc: false, landing: true, chat: true, callsign: true, vatsim: true, alerts: true, todMin: 10, fuelMin: 30, atcAheadNm: 40, atcPerHour: 0, apOff: false, takeoff: true, toc: true, tenK: false, approachMin: 0, gate: true, simLost: true, planLoaded: true, paused: true, taxi: true });
   assert.equal(withDefaults({ fuelMin: 9999 } as never).fuelMin, 30, "out-of-range falls back");
 });
 

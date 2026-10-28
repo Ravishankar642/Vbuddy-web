@@ -18,7 +18,7 @@ export interface PushPayload {
   body: string;
   /** Same tag replaces an earlier notification instead of stacking. */
   tag: string;
-  kind: "atc" | "landing" | "chat" | "vatsim" | "alert" | "event" | "test";
+  kind: "atc" | "landing" | "chat" | "vatsim" | "alert" | "event" | "taxi" | "test";
   url: string;
 }
 export type PushSender = (sub: PushSubscriptionJson, payload: string, opts: { TTL: number; urgency: "normal" | "high" }) => Promise<{ statusCode: number }>;
@@ -27,6 +27,7 @@ export const DEFAULT_PREFS: PushPrefs = {
   atc: true,
   landing: true,
   chat: true,
+  callsign: true,
   vatsim: true,
   alerts: true,
   apOff: false,
@@ -42,6 +43,7 @@ export const DEFAULT_PREFS: PushPrefs = {
   simLost: true,
   planLoaded: true,
   paused: true,
+  taxi: true,
 };
 
 /** Which choice switches each flight event on. */
@@ -319,6 +321,11 @@ export class PushService {
     return this.deliver(targets, { title: `Approaching ${arr ?? "the destination"}`, body: `About ${mins} min (${Math.round(nm)} nm) to go.`, tag: "event-approach", kind: "event", url: "/" }, 600, "high");
   }
 
+  /** Taxi guidance: a turn, a crossing or the holding point coming up, or a new route from ATC. Short-lived. */
+  notifyTaxi(n: { title: string; text: string; tag: string }) {
+    return this.deliver(this.subs.filter((s) => s.prefs.taxi !== false), { title: n.title, body: n.text, tag: `taxi-${n.tag}`, kind: "taxi", url: "/#ground" }, 60, "high");
+  }
+
   /** Takeoff, top of climb, 10,000 ft, at the gate, the sim stopping, the plan loaded, the sim pausing itself. */
   notifyEvent(e: FlightEvent) {
     const wants = EVENT_PREF[e.kind];
@@ -330,6 +337,11 @@ export class PushService {
     return this.deliver(this.subs.filter((s) => s.prefs.vatsim), { title: connected ? "VATSIM connected" : "VATSIM disconnected", body, tag: "vatsim", kind: "vatsim", url: "/#comms" }, 300, "high");
   }
   notifyChat(m: ChatMessage) {
+    if (m.kind === "radio" || m.kind === "broadcast") {
+      // ATC used your callsign: its own switch, and loud, so it reaches you away from the desk.
+      const where = `${m.from}${m.freqHz[0] ? " on " + formatMhz(m.freqHz[0]) : ""}`;
+      return this.deliver(this.subs.filter((s) => s.prefs.callsign !== false), { title: `ATC is calling you · ${where}`, body: m.text.slice(0, 180), tag: "callsign", kind: "chat", url: "/#comms/messages" }, 120, "high");
+    }
     const title = m.kind === "private" ? `Message from ${m.from}` : m.kind === "selcal" ? `SELCAL from ${m.from}` : `${m.from}${m.freqHz[0] ? " " + formatMhz(m.freqHz[0]) : ""}`;
     return this.deliver(this.subs.filter((s) => s.prefs.chat !== false), { title, body: m.text.slice(0, 180), tag: m.kind === "private" ? `dm-${m.from}` : "chat", kind: "chat", url: "/#comms" }, 300, "high");
   }

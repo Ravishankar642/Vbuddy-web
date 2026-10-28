@@ -12,7 +12,7 @@ import { FlightRecorder } from "./db/recorder.js";
 import { LegBook } from "./db/legs.js";
 import { EfbProxy } from "./efb/proxy.js";
 import { Airports, AtlasService } from "./atlas/atlas.js";
-import { formatMhz, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
+import { airlineFromSim, formatMhz, isTaxiClearance, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
 import { LandingStore } from "./landing/store.js";
 import { SectorLoader } from "./network/sector-loader.js";
 import { NetworkService } from "./network/service.js";
@@ -57,22 +57,23 @@ import { MockCapture, NoCapture, WindowsCapture } from "./simview/capture.js";
 import { ChasePlaneClient, MockChasePlane } from "./chaseplane/client.js";
 import { Updater, windowsLaunch } from "./update/updater.js";
 import { FlightGate } from "./sim/flight-gate.js";
-import { repairFlights } from "./db/repair.js";
+import { repairFlights, repairPlans } from "./db/repair.js";
 import { PlanTracker, type FlightStart } from "./briefing/plan-tracker.js";
 import { FlightEvents, pausedEvent, planLoadedEvent, simLostEvent, todEvent } from "./alerts/flight-events.js";
 import { Screenshots } from "./simview/screenshots.js";
 import { GroundService, MockGround, MsfsGround } from "./ground/service.js";
+import { TaxiGuideService } from "./ground/guide.js";
 import { FmsHub } from "./fms/hub.js";
 import { SimBridgeMcdu } from "./fms/simbridge-mcdu.js";
 import { FenixMcdu } from "./fms/fenix-mcdu.js";
 import { MockMcdu } from "./fms/mock-mcdu.js";
 import { MockVoiceFeed, VoiceService } from "./voice/service.js";
 import { NoAudio, WindowsLoopback } from "./voice/loopback.js";
-import { WHISPER_MODELS, WhisperEngine, type WhisperModel } from "./voice/whisper.js";
+import { isCpuUse, RECOMMENDED_MODEL, WHISPER_MODELS, WhisperEngine, type WhisperModel } from "./voice/whisper.js";
 import type { OutputDevice } from "./voice/loopback.js";
 import { SayIntentionsLink } from "./atcapps/sayintentions.js";
 import { BeyondAtcLog } from "./atcapps/beyondatc.js";
-import type { FlightEvent } from "@vbuddy/protocol";
+import type { FlightEvent, FlightPlanInfo } from "@vbuddy/protocol";
 
 const log = logger("bridge");
 
@@ -114,6 +115,7 @@ async function main() {
   if (db) {
     try {
       repairFlights(db, logger("flightlog"));
+      repairPlans(db, logger("flightlog"));
     } catch (e) {
       logger("flightlog").warn(`Couldn't tidy the older flights: ${(e as Error).message}`);
     }
@@ -295,6 +297,8 @@ async function main() {
     }
     for (const cb of flightEventCbs) cb(e);
     void push?.notifyEvent(e);
+    // Parked at the gate with the engines off: that plan is flown. It leaves the Flights tab and the map.
+    if (e.kind === "gate") planTracker.done();
   };
   source.onSample((t, at) => {
     lastSample = { t, at: Date.now() };
@@ -403,6 +407,7 @@ async function main() {
         cfg.dataDir ? join(cfg.dataDir, "voice.json") : null,
         vLog,
         () => comms.myCallsign(),
+        process.platform === "win32" ? new WindowsLoopback(vLog, "capture") : null,
       );
   /** Who is talking on the frequency you're listening to: the online controller there, else just the frequency. */
   const stationOn = (hz: number | null): string => {
@@ -412,7 +417,11 @@ async function main() {
     return st ? st.callsign : `Radio ${mhz}`;
   };
   voice?.onTranscript((t) => {
-    const m = comms.addExternal({ source: "voice", text: t.text, from: stationOn(comms.listeningHz()), ...(t.clipId ? { clip: t.clipId } : {}) });
+    // Your own calls (the microphone) go into the same conversation as yours; ATC's as theirs.
+    const m =
+      t.dir === "out"
+        ? comms.addExternal({ source: "voice", dir: "out", text: t.text, from: comms.myCallsign() ?? "YOU", ...(t.clipId ? { clip: t.clipId } : {}) })
+        : comms.addExternal({ source: "voice", text: t.text, from: stationOn(comms.listeningHz()), ...(t.clipId ? { clip: t.clipId } : {}) });
     vLog.debug(`heard on ${m.thread}: ${t.text}`);
   });
   voice?.onChange(() => comms.extrasChanged());
@@ -436,13 +445,17 @@ async function main() {
   const batc = new BeyondAtcLog(() => integrations.get().beyondatc && !cfg.mock, logger("beyondatc"));
   batc.onLine((l) => comms.addExternal({ source: "beyondatc", dir: l.dir, from: l.dir === "out" ? (comms.myCallsign() ?? "YOU") : l.from, text: l.text, freqHz: l.freqHz }));
   const MOCK_VOICE = { state: "listening", message: "Test flight: pretend ATC every 35 s.", device: "Test headset", model: "base.en", progress: null } as const;
+  const simCallsign = () => {
+    const st = source.status();
+    return airlineFromSim(st.atcAirline, st.atcFlightNumber, st.aircraftTitle)?.callsign ?? null;
+  };
   comms.setExtras(
     () => ({
       voice: voice ? voice.status() : MOCK_VOICE,
       apps: { sayintentions: si.status(), beyondatc: batc.status() },
     }),
-    // Without VATSIM: the AI ATC flight's callsign, else the SimBrief plan's.
-    () => si.callsign() ?? briefing.cachedCallsign() ?? null,
+    // Without VATSIM: the AI ATC flight's callsign, else the SimBrief plan's, else the sim's livery and flight number.
+    () => si.callsign() ?? briefing.cachedCallsign() ?? simCallsign(),
   );
   si.onStatus(() => comms.extrasChanged());
   batc.onStatus(() => comms.extrasChanged());
@@ -477,14 +490,18 @@ async function main() {
     if (gate.flightOpen() && gate.inFlight() && (n.connected || !n.pluginLinked) && trackSince === null) trackSince = Date.now();
     hub.patchStatus({ inFlight: gate.inFlight(), flight: gate.flightOpen() ? { id: c?.id ?? null, startedAt: c?.startedAt ?? Date.now(), trackSince, takeoffAt } : null });
   };
+  /** Ties the plan to the flight being recorded when it belongs to it (before takeoff a newer plan replaces an older one). */
+  const tiePlan = (p: FlightPlanInfo | null) => {
+    const c = recorder?.current();
+    if (p && p.matched && c) recorder!.setPlan({ dep: p.dep, arr: p.arr, callsign: p.callsign, route: p.route, distanceNm: p.distanceNm, eteMin: p.eteMin, ofpId: p.ofpId }, !c.airborne);
+  };
   planTracker.onChange((p, why) => {
     if (p) {
       const arrFix = p.fixes[p.fixes.length - 1];
       events.setPlan({ arr: p.arr, arrLat: arrFix?.ident === p.arr ? arrFix.lat : (airportDb.get(p.arr)?.lat ?? null), arrLon: arrFix?.ident === p.arr ? arrFix.lon : (airportDb.get(p.arr)?.lon ?? null), cruiseFt: p.cruiseFt });
       void loadTodPlan().catch(() => {});
     } else events.setPlan(null);
-    const c = recorder?.current();
-    if (p && p.matched && c) recorder!.setPlan({ dep: p.dep, arr: p.arr, callsign: p.callsign, route: p.route, distanceNm: p.distanceNm, eteMin: p.eteMin, ofpId: p.ofpId }, !c.airborne);
+    tiePlan(p);
     if (p && why === "vatsim") fireEvent(planLoadedEvent(p));
   });
   gate.on((e) => {
@@ -495,11 +512,17 @@ async function main() {
       todSaid = false;
       events.reset();
       flight.reset();
+      taxiGuide.reset();
       recorder?.begin({ seq: hub.latestSeq() + 1, ts: e.at, data: e.t });
-      void planTracker.refresh("flight-start", gateStart, false);
+      // A new flight right after a short one (a respawn, a move to another gate) keeps the same plan, which then
+      // doesn't "change": tie it to the new flight here, or it stays on the short one (which is hidden).
+      void planTracker.refresh("flight-start", gateStart, false).then((p) => tiePlan(p));
     } else if (e.kind === "flying") recorder?.setRecording(e.flying);
     else if (e.kind === "end") {
       const airborne = !!lastSample && !lastSample.t.onGround;
+      // Back to the menu after flying it (not a lost simulator, which may come back): that plan is flown too.
+      const flew = !!recorder?.current()?.airborne || takeoffAt !== null;
+      if (flew && !airborne && e.reason !== "sim-lost") planTracker.done();
       recorder?.finish();
       trackSince = null;
       gateStart = null;
@@ -558,6 +581,19 @@ async function main() {
       return a ? { icao: a.icao, name: a.name } : cfg.mock ? { icao: "VABB", name: "Mumbai" } : null;
     },
   };
+  // Progressive taxi guidance: the route being followed (from a device, or ATC's taxi clearance as soon as it's heard).
+  const taxiGuide = new TaxiGuideService(groundService, (lat, lon) => airportDb.nearest(lat, lon, 4)?.icao ?? (cfg.mock ? "VABB" : null), logger("taxi"));
+  source.onSample((t) => taxiGuide.sample(t));
+  source.onStatus((s) => {
+    if (!s.connected) taxiGuide.reset();
+  });
+  taxiGuide.onNotice((n) => void push?.notifyTaxi(n));
+  // A taxi clearance for you, however it arrived: VATSIM text, voice to text, SayIntentions, BeyondATC.
+  comms.onChat((m) => {
+    if (m.dir !== "in" || m.kind !== "radio" || !isTaxiClearance(m.text)) return;
+    if (!m.attention && comms.myCallsign()) return;
+    void taxiGuide.clearance(m.text, m.from);
+  });
   const simViewSource = cfg.mock ? new MockCapture() : process.platform === "win32" ? new WindowsCapture(logger("simview")) : new NoCapture();
   const screenshots = new Screenshots(simViewSource, cfg.dataDir ? join(cfg.dataDir, "screenshots") : null, logger("screenshot"));
 
@@ -595,7 +631,7 @@ async function main() {
       },
       accounts: { simbrief: integrations.get().simbrief, hoppieSet: integrations.get().hoppie !== "", owmSet: integrations.get().owm !== "", sayintentionsSet: integrations.get().sayintentions !== "", beyondatc: integrations.get().beyondatc },
       atcApps: { sayintentions: si.status(), beyondatc: batc.status() },
-      voice: voice ? { settings: voice.settings(), status: voice.status(), devices: voiceDevices, models: WHISPER_MODELS } : null,
+      voice: voice ? { settings: voice.settings(), status: voice.status(), devices: voiceDevices, micDevices, models: WHISPER_MODELS, recommended: RECOMMENDED_MODEL } : null,
       dataDir: cfg.dataDir,
       host: { autostart: autostartState(), plugin: pluginState(), canReconnect: source instanceof SimConnectSource },
       pause: pauser.status(),
@@ -603,6 +639,7 @@ async function main() {
     };
   };
   let voiceDevices: OutputDevice[] = [];
+  let micDevices: OutputDevice[] = [];
   const consoleAct = async (action: ConsoleAction, body: Record<string, unknown>): Promise<string | void> => {
     if (action === "relay") {
       if (!relayAllowed) return "This edition of VBuddy works on your home network only.";
@@ -633,13 +670,16 @@ async function main() {
     } else if (action === "voice") {
       if (!voice) return "Voice to text isn't available in a test flight.";
       if (body.listDevices === true) {
-        voiceDevices = await voice.devices();
+        [voiceDevices, micDevices] = await Promise.all([voice.devices(), voice.micDevices()]);
         return voiceDevices.length ? undefined : "No output devices were found (or the audio helper couldn't run).";
       }
       return voice.configure({
         ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
         ...(typeof body.device === "string" ? { device: body.device } : {}),
         ...(typeof body.model === "string" ? { model: body.model as WhisperModel } : {}),
+        ...(typeof body.micEnabled === "boolean" ? { micEnabled: body.micEnabled } : {}),
+        ...(typeof body.micDevice === "string" ? { micDevice: body.micDevice } : {}),
+        ...(isCpuUse(body.cpu) ? { cpu: body.cpu } : {}),
         ...(body.download === true ? { download: true } : {}),
       });
     } else if (action === "updateInstall") {
@@ -660,7 +700,7 @@ async function main() {
   };
 
   try {
-    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
+    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, taxi: taxiGuide, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EADDRINUSE") log.error(`Port ${cfg.port} is already in use. Is another bridge running? Use --port to pick another.`);

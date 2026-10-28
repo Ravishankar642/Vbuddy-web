@@ -1,6 +1,6 @@
+import { flightIdentity } from "../lib/identity";
 import { useEffect, useState } from "react";
 import type { BridgeSnapshot } from "../lib/bridge-client";
-import { airlineOf } from "../lib/airlines";
 import { apiFetch } from "../lib/api";
 import { int } from "../lib/format";
 
@@ -37,17 +37,16 @@ const hm = (min: number) => `${Math.floor(min / 60)}h ${String(Math.round(min % 
  * logos folder, else its code in the airline's colour) and the SimBrief plan tied to this flight.
  */
 export function FlightPlate({ b }: { b: BridgeSnapshot }) {
-  const net = b.comms?.net;
-  const callsign = net?.connected ? net.callsign : null;
   const plan = b.plan;
-  const shownCallsign = callsign ?? plan?.callsign ?? null;
-  const a = airlineOf(shownCallsign);
+  const who = flightIdentity(b);
+  const shownCallsign = who.callsign;
+  const a = who.airline;
   const ownLogo = useLogo(a?.icao ?? null);
   // The PC's own logo first, then the public logo images; the airline's code in its colour if none loads.
   const sources = [...(ownLogo ? [ownLogo] : []), ...(a ? LOGO_SOURCES.map((f) => f(a.iata)) : [])];
   const [failed, setFailed] = useState<string[]>([]);
   const logo = sources.find((u) => !failed.includes(u)) ?? null;
-  if (!shownCallsign && !plan) return null;
+  if (!shownCallsign && !plan && !a) return null;
   const left = plan && b.latest && plan.fixes.length ? remainingNm(plan.fixes, b.latest.data.lat, b.latest.data.lon) : null;
   return (
     <section className="plate" aria-label="Your flight">
@@ -58,7 +57,7 @@ export function FlightPlate({ b }: { b: BridgeSnapshot }) {
         <b>{a?.name ?? "Your flight"}</b>
         <span>
           {shownCallsign ?? "No callsign"}
-          {callsign ? <em className="plate__live">On VATSIM</em> : shownCallsign ? <em>From SimBrief</em> : null}
+          {who.source === "network" ? <em className="plate__live">On the network</em> : who.source === "plan" ? <em>From SimBrief</em> : who.source === "sim" ? <em>From the sim</em> : null}
         </span>
       </div>
       {plan && (

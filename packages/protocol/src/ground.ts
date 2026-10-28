@@ -720,3 +720,50 @@ export function parseTaxiClearance(text: string): ParsedClearance {
 
 /** Does this radio call look like a taxi clearance? */
 export const isTaxiClearance = (text: string) => /\bTAXI\b/i.test(text) && (/\bVIA\b/i.test(text) || /\bRUNWAY\b|\bRWY\b|\bSTAND\b|\bGATE\b/i.test(text));
+
+/* ------------------------------------------------------------------ guidance from the bridge */
+
+const LegSchema = z.object({ name: z.string().max(40), kind: z.enum(["taxi", "runway", "parking"]), lengthM: z.number(), at: z.number().int() });
+export const TaxiPlanSchema = z.object({
+  points: z.array(z.tuple([z.number(), z.number()])).max(4000),
+  nodes: z.array(z.number().int()).max(4000),
+  legs: z.array(LegSchema).max(1000),
+  distanceM: z.number(),
+  via: z.array(z.string().max(40)).max(100),
+  crossings: z.array(z.string().max(16)).max(40),
+  destination: z.string().max(80),
+  runway: z.string().max(4).nullable(),
+  text: z.string().max(600),
+  unmatched: z.array(z.string().max(40)).max(40),
+  events: z.array(z.object({ at: z.number().int(), what: z.enum(["turn", "cross"]), name: z.string().max(40) })).max(1000),
+});
+
+export const TaxiProgressSchema = z.object({
+  offRouteM: z.number(),
+  remainingM: z.number(),
+  next: z.object({ what: z.enum(["turn", "cross", "hold", "arrive"]), name: z.string().max(80), inM: z.number(), turn: z.enum(["left", "right", "ahead"]) }).nullable(),
+  leg: z.number().int(),
+});
+
+/** The taxi route being followed, kept on the bridge PC so every device and the notifications agree. */
+export const TaxiGuideSchema = z.object({
+  icao: z.string().max(8),
+  plan: TaxiPlanSchema,
+  /** Who set it: a pilot on one of the devices, or ATC's clearance (VATSIM text, voice to text, an AI ATC app). */
+  source: z.enum(["pilot", "atc"]),
+  /** The clearance it was read from, and who gave it. */
+  clearance: z.string().max(600).nullable(),
+  from: z.string().max(40).nullable(),
+  setAt: z.number(),
+  /** Where you are along it (null until the aircraft's position is known). */
+  progress: TaxiProgressSchema.nullable(),
+});
+export type TaxiGuide = z.infer<typeof TaxiGuideSchema>;
+
+const TaxiToSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("runway"), runway: z.string().min(1).max(8) }), z.object({ kind: z.literal("parking"), index: z.number().int().min(0).max(4000) })]);
+/** A device asks the bridge for a route (from where the aircraft is, or a stand), or to stop following one. */
+export const TaxiRequestSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("plan"), icao: z.string().min(3).max(4), to: TaxiToSchema, via: z.array(z.string().min(1).max(8)).max(20), fromStand: z.number().int().min(0).max(4000).optional() }),
+  z.object({ op: z.literal("clear") }),
+]);
+export type TaxiRequest = z.infer<typeof TaxiRequestSchema>;

@@ -75,6 +75,8 @@ export interface ServerExtras {
   weatherInfo?: (() => { clouds: boolean }) | null;
   /** Airline logos the pilot put in VBuddy's data folder (logos\QTR.png). */
   logosDir?: string | null;
+  /** VBuddy's progressive taxi guidance. */
+  taxi?: import("./ground/guide.js").TaxiGuideService | null;
   /** Recordings of radio transmissions VBuddy transcribed (WAV), by id. */
   voiceClip?: ((id: string) => Buffer | null) | null;
   /** Which CDU / MCDU the loaded aircraft has (overrides the panel's own CDU field), and when that changes. */
@@ -273,6 +275,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     sendLegs(client);
     sendPairingInfo(client);
     sendPush(client);
+    if (opts.taxi) send(ws, { t: "taxiGuide", guide: opts.taxi.guide() });
     clients.add(client);
     log.info(
       `${client.name} connected from ${client.addr}${client.relayed ? " (via relay)" : ""}` +
@@ -721,6 +724,11 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
             send(ws, { t: "simViewStatus", state: st.state, ...(st.message ? { message: st.message } : {}) });
           }
         }
+      } else if (msg.t === "taxiCmd") {
+        const id = msg.id;
+        if (!opts.taxi) send(ws, { t: "taxiResult", id, ok: false, error: "Taxi guidance isn't available on this bridge." });
+        else if (!trusted(client)) send(ws, { t: "taxiResult", id, ok: false, error: "Pair this device first (Systems → Controls)." });
+        else void opts.taxi.request(msg.cmd).then((r) => send(ws, { t: "taxiResult", id, ...r }));
       } else if (msg.t === "visibility") {
         client.visible = msg.visible;
       } else if (msg.t === "screenshot") {
@@ -812,6 +820,13 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
   });
   opts.flightAlerts?.onAlert((alert) => {
     for (const c of clients) send(c.ws, { t: "flightAlert", alert });
+  });
+  opts.taxi?.onChange(() => {
+    const guide = opts.taxi!.guide();
+    for (const c of clients) send(c.ws, { t: "taxiGuide", guide });
+  });
+  opts.taxi?.onNotice((notice) => {
+    for (const c of clients) send(c.ws, { t: "taxiNotice", notice });
   });
   opts.flightEvents?.onEvent((event) => {
     for (const c of clients) send(c.ws, { t: "flightEvent", event });

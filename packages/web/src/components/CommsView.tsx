@@ -7,6 +7,7 @@ import { useBridgeActions } from "../lib/useBridge";
 import { PairThisDevice } from "./Cockpit";
 import { zulu } from "./StatusBar";
 import { AcarsView } from "./AcarsView";
+import { onBridgePc, setAutoPlay, useAutoPlay, type AutoPlay } from "../lib/atc-audio";
 
 type Run = (cmd: CommsCommand) => Promise<CmdReply>;
 
@@ -462,6 +463,12 @@ function ListeningCard({ b }: { b: BridgeSnapshot }) {
 
 /* ------------------------------------------------------------------ tab */
 
+type CommsMode = "radio" | "messages" | "acars";
+const modeFromHash = (): CommsMode => {
+  const seg = window.location.hash.slice(1).split("/")[1];
+  return seg === "messages" || seg === "acars" ? seg : "radio";
+};
+
 export function CommsView({ b }: { b: BridgeSnapshot }) {
   const { commsCommand } = useBridgeActions();
   const [chime, setChime] = useState(chimeEnabled);
@@ -469,15 +476,29 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
   const control = b.control;
   const enabled = !!control?.allowed;
   const c = b.comms;
-  const [mode, setMode] = useState<"radio" | "acars">("radio");
+  const [mode, setModeState] = useState<CommsMode>(modeFromHash);
+  const setMode = (m: CommsMode) => {
+    setModeState(m);
+    history.replaceState(null, "", m === "radio" ? "#comms" : `#comms/${m}`);
+  };
+  useEffect(() => {
+    const on = () => setModeState(modeFromHash());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   const unreadAcars = b.acars ? b.acars.messages.filter((m) => m.dir === "in" && m.answers && !m.answered).length : 0;
+  const auto = useAutoPlay();
+  const unreadMsgs = Object.values(b.unread).reduce((n, x) => n + x, 0);
 
   return (
     <div className="comms">
       {control && !control.allowed && control.reason === "not-paired" && <PairThisDevice />}
-      <div className="seg comms__mode" role="group" aria-label="Radio or ACARS">
+      <div className="seg comms__mode" role="group" aria-label="Radio, messages or ACARS">
         <button type="button" aria-pressed={mode === "radio"} onClick={() => setMode("radio")}>
           Radio
+        </button>
+        <button type="button" aria-pressed={mode === "messages"} onClick={() => setMode("messages")}>
+          Messages{unreadMsgs > 0 ? ` (${unreadMsgs})` : ""}
         </button>
         <button type="button" aria-pressed={mode === "acars"} onClick={() => setMode("acars")}>
           ACARS{unreadAcars > 0 ? ` (${unreadAcars})` : ""}
@@ -488,6 +509,65 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
           <h2 className="card__title">ACARS (Hoppie)</h2>
           <AcarsView b={b} enabled={enabled} />
         </section>
+      ) : mode === "messages" ? (
+        <>
+          <section className="card">
+            <div className="card__head">
+              <h2 className="card__title">Messages</h2>
+              <div className="chime">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={chime}
+                    onChange={(e) => {
+                      setChime(e.target.checked);
+                      setChimeEnabled(e.target.checked);
+                    }}
+                  />{" "}
+                  Chime
+                </label>
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => void playChime(true).then((ok) => setChimeNote(ok ? null : "Your browser blocked sound. Tap anywhere on the page and try again."))}
+                >
+                  Test
+                </button>
+              </div>
+            </div>
+            {chimeNote && <p className="muted">{chimeNote}</p>}
+            <div className="autoplay">
+              <span className="autoplay__label">🔊 Hear ATC here</span>
+              <div className="seg seg--small" role="group" aria-label="Play ATC recordings as they arrive">
+                {(
+                  [
+                    ["off", "Off"],
+                    ["mine", "Calls for me"],
+                    ["all", "All ATC"],
+                  ] as Array<[AutoPlay, string]>
+                ).map(([k, label]) => (
+                  <button key={k} type="button" aria-pressed={auto.mode === k} onClick={() => setAutoPlay(k)} disabled={onBridgePc() && k !== "off"}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <small className="muted">
+                {onBridgePc()
+                  ? "On this PC you already hear ATC. Use this on your phone or tablet."
+                  : (auto.note ??
+                    (auto.mode === "off"
+                      ? "Plays each transmission from VBuddy's voice to text as it arrives, without pressing play. Keep the app open."
+                      : auto.playingId
+                        ? "Playing…"
+                        : auto.mode === "mine"
+                          ? "Plays the calls that use your callsign as they arrive."
+                          : "Plays every transmission as it arrives."))}
+              </small>
+            </div>
+            {!enabled && control?.reason === "not-paired" ? <p className="muted">Pair this device to read and send messages. Direct messages are private to paired devices.</p> : <Console b={b} run={commsCommand} enabled={enabled} />}
+          </section>
+          <ListeningCard b={b} />
+        </>
       ) : (
       <>
       <section className="card">
@@ -515,35 +595,6 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
         <NetworkCard b={b} run={commsCommand} enabled={enabled} />
       </section>
 
-      <ListeningCard b={b} />
-
-      <section className="card">
-        <div className="card__head">
-          <h2 className="card__title">Messages</h2>
-          <div className="chime">
-            <label>
-              <input
-                type="checkbox"
-                checked={chime}
-                onChange={(e) => {
-                  setChime(e.target.checked);
-                  setChimeEnabled(e.target.checked);
-                }}
-              />{" "}
-              Chime
-            </label>
-            <button
-              type="button"
-              className="linkish"
-              onClick={() => void playChime(true).then((ok) => setChimeNote(ok ? null : "Your browser blocked sound. Tap anywhere on the page and try again."))}
-            >
-              Test
-            </button>
-          </div>
-        </div>
-        {chimeNote && <p className="muted">{chimeNote}</p>}
-        {!enabled && control?.reason === "not-paired" ? <p className="muted">Pair this device to read and send messages. Direct messages are private to paired devices.</p> : <Console b={b} run={commsCommand} enabled={enabled} />}
-      </section>
       </>
       )}
     </div>

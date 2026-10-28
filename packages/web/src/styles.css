@@ -809,6 +809,10 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .simview { display: grid; gap: 12px; }
 .simview__box { position: relative; aspect-ratio: 16 / 9; background: #05070a; border-radius: calc(var(--r-card) - 4px); overflow: hidden; display: grid; place-items: center; }
 .simview__box:fullscreen { border-radius: 0; aspect-ratio: auto; }
+.simview__box:-webkit-full-screen { border-radius: 0; aspect-ratio: auto; width: 100%; height: 100%; }
+/* Full screen without the browser's help (iPhone, the iOS app): the picture covers the window. */
+.simview__box.is-pseudo { position: fixed; inset: 0; z-index: 10000; border-radius: 0; aspect-ratio: auto; width: 100vw; height: 100dvh; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.simview__close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right)); z-index: 1; width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 20px; cursor: pointer; }
 .simview__img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .simview__wait { color: #c9ced6; text-align: center; padding: 0 24px; font-size: 15px; max-width: 34ch; margin: 0; }
 .simview__badge { position: absolute; right: 10px; bottom: 10px; font-size: 12px; font-weight: 600; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 3px 8px; border-radius: 999px; }
@@ -1083,3 +1087,20 @@ button.ms__pill:not([aria-label=""]) { cursor: pointer; }
 .listenrow__dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .listenrow__dot--ok { background: #2fbf71; } .listenrow__dot--warn { background: #e0a84f; } .listenrow__dot--bad { background: var(--bad); } .listenrow__dot--off { background: var(--edge-strong); }
 .listenrow__bar { width: 100%; height: 6px; }
+
+/* ---- progressive taxi banner (Flights tab) ---- */
+.taxibar { appearance: none; border: 0; cursor: pointer; display: flex; gap: 12px; align-items: center; width: min(560px, calc(100vw - 24px)); margin: 0 auto 8px; padding: 10px 14px; border-radius: 16px; background: #ff4fd8; color: #2a0022; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); text-align: left; font: inherit; pointer-events: auto; }
+.taxibar--hold { background: #ff3b4e; color: #fff; }
+.taxibar--arrive { background: #3987e5; color: #fff; }
+.taxibar__arrow { flex: none; width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font-size: 30px; font-weight: 800; background: rgba(255, 255, 255, 0.25); }
+.taxibar__text { display: flex; flex-direction: column; min-width: 0; }
+.taxibar__text b { font-size: 18px; line-height: 1.2; }
+.taxibar__text span { font-size: 14px; }
+.taxibar__text strong { font: 800 16px var(--num); }
+.gnd__from { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--accent); }
+
+/* Comms › Messages: hearing ATC without pressing play */
+.autoplay { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 4px 0 12px; }
+.autoplay__label { font-weight: 600; }
+.autoplay small { flex-basis: 100%; }
+.seg--small button { padding: 4px 10px; font-size: 0.85rem; }

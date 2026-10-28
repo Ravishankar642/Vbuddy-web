@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import type { Logger } from "../log.js";
 import type { AudioSource, OutputDevice } from "./loopback.js";
 import { Segmenter, wav, type Clip } from "./vad.js";
-import { isWhisperModel, type SpeechEngine, type WhisperModel } from "./whisper.js";
+import { isCpuUse, isWhisperModel, type CpuUse, type SpeechEngine, type WhisperModel } from "./whisper.js";
 
 /** What is kept between runs (voice.json in the data folder). */
 export interface VoiceSettings {
@@ -12,14 +12,22 @@ export interface VoiceSettings {
   /** Part of the output device's name ("Headset"); "" = the default output device. */
   device: string;
   model: WhisperModel;
+  /** Also turn what you say into text, from your microphone (your side of the conversation). */
+  micEnabled: boolean;
+  /** Part of the microphone's name; "" = the default microphone. */
+  micDevice: string;
+  /** How much CPU the speech engine may take while the sim runs. */
+  cpu: CpuUse;
 }
-const DEFAULTS: VoiceSettings = { enabled: false, device: "", model: "base.en" };
+const DEFAULTS: VoiceSettings = { enabled: false, device: "", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" };
 /** Recordings kept for playback in the app (memory only). */
 const MAX_CLIPS = 40;
 /** Transmissions waiting for the engine; older ones are dropped rather than falling minutes behind. */
 const MAX_QUEUE = 6;
 
 export interface Transcript {
+  /** in: heard from ATC (the output device); out: said by you (the microphone). */
+  dir: "in" | "out";
   text: string;
   clipId: string;
   at: number;
@@ -34,7 +42,10 @@ export interface Transcript {
 export class VoiceService {
   private s: VoiceSettings;
   private seg: Segmenter | null = null;
-  private queue: Clip[] = [];
+  private micSeg: Segmenter | null = null;
+  private queue: Array<Clip & { dir: "in" | "out" }> = [];
+  private micProblem: string | null = null;
+  private micListening = false;
   private working = false;
   private clips = new Map<string, Buffer>();
   private seq = 0;
@@ -51,6 +62,8 @@ export class VoiceService {
     private log: Logger,
     /** Your callsign, to help the engine spell it (and nothing else from the flight). */
     private callsign: () => string | null = () => null,
+    /** Your microphone, for your side of the conversation. */
+    private mic: AudioSource | null = null,
   ) {
     this.s = this.load();
     engine.onStatus(() => this.changed());
@@ -60,7 +73,14 @@ export class VoiceService {
     if (!this.file) return { ...DEFAULTS };
     try {
       const j = JSON.parse(readFileSync(this.file, "utf8")) as Partial<VoiceSettings>;
-      return { enabled: j.enabled === true, device: typeof j.device === "string" ? j.device.slice(0, 120) : "", model: isWhisperModel(j.model) ? j.model : DEFAULTS.model };
+      return {
+        enabled: j.enabled === true,
+        device: typeof j.device === "string" ? j.device.slice(0, 120) : "",
+        model: isWhisperModel(j.model) ? j.model : DEFAULTS.model,
+        micEnabled: j.micEnabled === true,
+        micDevice: typeof j.micDevice === "string" ? j.micDevice.slice(0, 120) : "",
+        cpu: isCpuUse(j.cpu) ? j.cpu : DEFAULTS.cpu,
+      };
     } catch {
       return { ...DEFAULTS };
     }
@@ -80,6 +100,9 @@ export class VoiceService {
   }
   devices(): Promise<OutputDevice[]> {
     return this.audio.devices();
+  }
+  micDevices(): Promise<OutputDevice[]> {
+    return this.mic ? this.mic.devices() : Promise.resolve([]);
   }
   onChange(cb: () => void) {
     this.cbs.push(cb);
@@ -101,14 +124,23 @@ export class VoiceService {
     if (this.problem) return { state: "error", message: this.problem, ...base };
     if (e.state === "starting" || !this.listening) return { state: "starting", message: e.message ?? "Starting…", ...base };
     const hint = this.cutsInARow >= 3 ? "Hearing sound without a break: if the sim plays on this device too, give vPilot its own output (a headset) and pick that." : null;
-    return { state: "listening", message: hint, ...base };
+    const micNote = this.s.micEnabled ? (this.micProblem ? `Microphone: ${this.micProblem}` : this.micListening ? `Your side too, from ${this.mic?.current() ?? "the microphone"}.` : null) : null;
+    return { state: "listening", message: [hint, micNote].filter(Boolean).join(" ") || null, ...base };
   }
 
   /** Change the settings from the VBuddy window. `download` allows fetching the engine and model. */
   async configure(p: Partial<VoiceSettings> & { download?: boolean }): Promise<string | void> {
     if (p.model !== undefined && !isWhisperModel(p.model)) return "Unknown speech model.";
-    const next: VoiceSettings = { enabled: p.enabled ?? this.s.enabled, device: typeof p.device === "string" ? p.device.slice(0, 120) : this.s.device, model: p.model ?? this.s.model };
-    const restart = next.device !== this.s.device || next.model !== this.s.model || next.enabled !== this.s.enabled;
+    if (p.cpu !== undefined && !isCpuUse(p.cpu)) return "Unknown CPU setting.";
+    const next: VoiceSettings = {
+      enabled: p.enabled ?? this.s.enabled,
+      device: typeof p.device === "string" ? p.device.slice(0, 120) : this.s.device,
+      model: p.model ?? this.s.model,
+      micEnabled: p.micEnabled ?? this.s.micEnabled,
+      micDevice: typeof p.micDevice === "string" ? p.micDevice.slice(0, 120) : this.s.micDevice,
+      cpu: p.cpu ?? this.s.cpu,
+    };
+    const restart = next.cpu !== this.s.cpu || next.device !== this.s.device || next.model !== this.s.model || next.enabled !== this.s.enabled || next.micEnabled !== this.s.micEnabled || next.micDevice !== this.s.micDevice;
     this.s = next;
     this.save();
     if (!next.enabled) {
@@ -126,10 +158,11 @@ export class VoiceService {
     this.stopAudio();
     this.problem = null;
     this.changed();
-    const ok = await this.engine.prepare(this.s.model, download);
+    const ok = await this.engine.prepare(this.s.model, download, this.s.cpu);
     if (!ok || !this.s.enabled) return this.changed();
     this.seg = new Segmenter();
-    this.seg.onClip((c) => this.enqueue(c));
+    this.seg.onClip((c) => this.enqueue(c, "in"));
+    this.startMic();
     this.audio.start(
       this.s.device,
       (samples, at) => {
@@ -154,8 +187,37 @@ export class VoiceService {
     );
   }
 
+  /** Your side: the microphone, cut into what you say the same way. */
+  private startMic() {
+    this.mic?.stop();
+    this.micSeg = null;
+    this.micListening = false;
+    this.micProblem = null;
+    if (!this.mic || !this.s.micEnabled) return;
+    this.micSeg = new Segmenter();
+    this.micSeg.onClip((c) => this.enqueue(c, "out"));
+    this.mic.start(
+      this.s.micDevice,
+      (samples, at) => {
+        if (!this.micListening) {
+          this.micListening = true;
+          this.changed();
+        }
+        this.micSeg?.push(samples, at);
+      },
+      (why) => {
+        this.micListening = false;
+        if (why !== "stopped") this.micProblem = why;
+        this.changed();
+      },
+    );
+  }
+
   private stopAudio() {
     this.audio.stop();
+    this.mic?.stop();
+    this.micSeg = null;
+    this.micListening = false;
     this.seg = null;
     this.listening = false;
     this.queue = [];
@@ -165,10 +227,12 @@ export class VoiceService {
     this.engine.stop();
   }
 
-  private enqueue(c: Clip) {
-    this.cutsInARow = c.cut ? this.cutsInARow + 1 : 0;
-    if (this.cutsInARow === 3) this.changed();
-    this.queue.push(c);
+  private enqueue(c: Clip, dir: "in" | "out") {
+    if (dir === "in") {
+      this.cutsInARow = c.cut ? this.cutsInARow + 1 : 0;
+      if (this.cutsInARow === 3) this.changed();
+    }
+    this.queue.push({ ...c, dir });
     if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
     void this.work();
   }
@@ -192,7 +256,7 @@ export class VoiceService {
         const clipId = `v${++this.seq}`;
         this.clips.set(clipId, audio);
         if (this.clips.size > MAX_CLIPS) this.clips.delete(this.clips.keys().next().value!);
-        for (const cb of this.outCbs) cb({ text, clipId, at: c.startAt, cut: c.cut });
+        for (const cb of this.outCbs) cb({ dir: c.dir, text, clipId, at: c.startAt, cut: c.cut });
       }
     } finally {
       this.working = false;
@@ -225,7 +289,7 @@ export class MockVoiceFeed {
     this.stop();
     this.timer = setInterval(() => {
       const l = this.lines();
-      this.emit({ text: l[this.i++ % l.length]!, clipId: "", at: Date.now(), cut: false });
+      this.emit({ dir: "in", text: l[this.i++ % l.length]!, clipId: "", at: Date.now(), cut: false });
     }, everyMs);
     this.timer.unref?.();
   }

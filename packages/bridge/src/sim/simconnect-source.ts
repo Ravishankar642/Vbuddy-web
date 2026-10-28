@@ -250,6 +250,9 @@ export class SimConnectSource implements SimSource {
     handle.addToDataDefinition(DEF_TITLE, "TITLE", null, SimConnectDataType.STRING256);
     handle.addToDataDefinition(DEF_IDENT, "ATC ID", null, SimConnectDataType.STRING32);
     handle.addToDataDefinition(DEF_IDENT, "ATC MODEL", null, SimConnectDataType.STRING64);
+    // The livery's airline and flight number (aircraft.cfg / the flight's settings): "IndiGo", "Qatar", "Speedbird".
+    handle.addToDataDefinition(DEF_IDENT, "ATC AIRLINE", null, SimConnectDataType.STRING64);
+    handle.addToDataDefinition(DEF_IDENT, "ATC FLIGHT NUMBER", null, SimConnectDataType.STRING8);
     handle.requestDataOnSimObject(REQ_IDENT, DEF_IDENT, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
 
     handle.requestDataOnSimObject(REQ_TELEMETRY, DEF_TELEMETRY, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME);
@@ -296,7 +299,18 @@ export class SimConnectSource implements SimSource {
         try {
           const atcId = r.data.readString32().trim();
           const atcModel = cleanModel(r.data.readString64());
-          if (atcId !== this.st.atcId || atcModel !== this.st.atcModel) this.setStatus({ atcId, atcModel });
+          let atcAirline = "";
+          let atcFlightNumber = "";
+          try {
+            atcAirline = r.data.readString64().replace(/\0/g, "").trim();
+            atcFlightNumber = r.data.readString8().replace(/\0/g, "").trim();
+          } catch {
+            /* older sims without them */
+          }
+          if (atcId !== this.st.atcId || atcModel !== this.st.atcModel || atcAirline !== (this.st.atcAirline ?? "") || atcFlightNumber !== (this.st.atcFlightNumber ?? "")) {
+            if (atcAirline && atcAirline !== this.st.atcAirline) log.info(`Airline from the sim: ${atcAirline}${atcFlightNumber ? ` ${atcFlightNumber}` : ""}`);
+            this.setStatus({ atcId, atcModel, atcAirline, atcFlightNumber });
+          }
         } catch {
           /* an aircraft without them */
         }

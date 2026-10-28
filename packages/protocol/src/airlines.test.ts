@@ -1,0 +1,21 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { airlineFromSim } from "./airlines.js";
+test("the sim's airline and the aircraft title find the right airline", () => {
+  const c = (a: string, f = "", t = "") => airlineFromSim(a, f, t)?.icao ?? null;
+  assert.equal(c("IndiGo", "612"), "IGO");
+  assert.equal(airlineFromSim("IndiGo", "612")?.callsign, "IGO612");
+  assert.equal(c("Qatar"), "QTR");
+  assert.equal(c("QATARI"), "QTR");
+  assert.equal(c("Speedbird"), "BAW");
+  assert.equal(c("Qatar Airways"), "QTR");
+  assert.equal(c("QTR"), "QTR");
+  assert.equal(c("", "", "FenixA320 Qatar Airways A7-AHX"), "QTR");
+  assert.equal(c("", "", "Airbus A320 Neo IndiGo VT-IZA"), "IGO");
+  assert.equal(c("", "", "PMDG 737-800 Air India Express"), "AXB");
+  assert.equal(c("", "", "VBuddy Mock A320"), null);
+  assert.equal(c("", "", "Airbus A320neo Asobo"), null);
+  assert.equal(c("easyJet"), "EZY");
+  assert.equal(c("Emirates"), "UAE");
+  assert.equal(c("Lufthansa"), "DLH");
+});

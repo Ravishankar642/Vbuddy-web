@@ -11,7 +11,7 @@ import type { Logger } from "../log.js";
  * output. With "list" it prints the output devices as JSON lines instead. Nothing is recorded to disk here.
  */
 const HELPER = String.raw`
-param([string]$Mode = "capture", [string]$Device = "")
+param([string]$Mode = "capture", [string]$Device = "", [string]$Flow = "render")
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
@@ -84,11 +84,13 @@ public static class VbAudio {
   }
   static string Json(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
 
-  public static void Run(string mode, string want) {
+  public static void Run(string mode, string want, string flowName) {
+    // render (0): what the PC plays, through loopback; capture (1): a microphone, as it is.
+    int flow = flowName == "capture" ? 1 : 0;
     var en = (IVbEnum)new VbMMDeviceEnumerator();
-    IVbDevice def; en.GetDefaultAudioEndpoint(0, 0, out def);
+    IVbDevice def; en.GetDefaultAudioEndpoint(flow, 0, out def);
     string defId; def.GetId(out defId);
-    IVbCollection all; en.EnumAudioEndpoints(0, 1, out all);
+    IVbCollection all; en.EnumAudioEndpoints(flow, 1, out all);
     int n; all.GetCount(out n);
     IVbDevice pick = null; string pickName = "";
     for (int i = 0; i < n; i++) {
@@ -111,7 +113,7 @@ public static class VbAudio {
     int bits = Marshal.ReadInt16(fmt, 14);
     bool isFloat = tag == 3;
     if (tag == 0xFFFE) isFloat = Marshal.ReadInt16(fmt, 24) == 3;
-    int hr = client.Initialize(0, 0x00020000, 10000000, 0, fmt, IntPtr.Zero);
+    int hr = client.Initialize(0, flow == 0 ? 0x00020000 : 0, 10000000, 0, fmt, IntPtr.Zero);
     if (hr != 0) throw new Exception("Initialize failed 0x" + hr.ToString("X8"));
     Guid cc = IID_CAPTURE; object co; client.GetService(ref cc, out co);
     var cap = (IVbCapture)co;
@@ -179,7 +181,7 @@ public static class VbAudio {
   }
 }
 '@
-[VbAudio]::Run($Mode, $Device)
+[VbAudio]::Run($Mode, $Device, $Flow)
 `;
 
 function helperFile(): string {
@@ -218,11 +220,14 @@ export class NoAudio implements AudioSource {
   stop() {}
 }
 
-/** WASAPI loopback on Windows. */
+/** WASAPI on Windows: loopback of an output device ("render"), or a microphone ("capture"). */
 export class WindowsLoopback implements AudioSource {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private dev: string | null = null;
-  constructor(private log: Logger) {}
+  constructor(
+    private log: Logger,
+    private flow: "render" | "capture" = "render",
+  ) {}
 
   current() {
     return this.dev;
@@ -230,7 +235,7 @@ export class WindowsLoopback implements AudioSource {
 
   devices(): Promise<OutputDevice[]> {
     return new Promise((done) => {
-      const p = ps(["list"]);
+      const p = ps(["list", "", this.flow]);
       let out = "";
       p.stdout.setEncoding("utf8");
       p.stdout.on("data", (d: string) => (out += d));
@@ -252,7 +257,7 @@ export class WindowsLoopback implements AudioSource {
 
   start(device: string, onSamples: (s: Int16Array, at: number) => void, onStop: (why: string) => void) {
     this.stop();
-    const p = ps(["capture", device]);
+    const p = ps(["capture", device, this.flow]);
     this.proc = p;
     let carry: Buffer = Buffer.alloc(0);
     let err = "";
@@ -269,7 +274,7 @@ export class WindowsLoopback implements AudioSource {
       for (const line of d.split(/\r?\n/)) {
         if (line.startsWith("DEVICE ")) {
           this.dev = line.slice(7).trim();
-          this.log.info(`ATC voice: listening to "${this.dev}"`);
+          this.log.info(`ATC voice: ${this.flow === "capture" ? "your microphone" : "listening to"} "${this.dev}"`);
         } else if (line.startsWith("FORMAT ")) this.log.debug(`ATC voice: device format ${line.slice(7)}`);
         else if (line.trim()) err = (err + " " + line.trim()).slice(-400);
       }

@@ -1,7 +1,7 @@
+import { flightIdentity } from "../lib/identity";
 import { useState, type ReactNode } from "react";
 import type { FcuState, Telemetry } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
-import { airlineOf } from "../lib/airlines";
 import { coord, fixed, hdg, int, signed, signed1 } from "../lib/format";
 import { LOGO_SOURCES, remainingNm, useLogo } from "./FlightPlate";
 import { IconFlight } from "./icons";
@@ -96,8 +96,9 @@ const I = {
 export function LiveFlight({ b, t, now }: { b: BridgeSnapshot; t: Telemetry; now: number }) {
   const net = b.comms?.net;
   const plan = b.plan;
-  const callsign = (net?.connected ? net.callsign : null) ?? plan?.callsign ?? null;
-  const a = airlineOf(callsign);
+  const who = flightIdentity(b);
+  const callsign = who.callsign;
+  const a = who.airline;
   const ownLogo = useLogo(a?.icao ?? null);
   const sources = [...(ownLogo ? [ownLogo] : []), ...(a ? LOGO_SOURCES.map((f) => f(a.iata)) : [])];
   const [failed, setFailed] = useState<string[]>([]);

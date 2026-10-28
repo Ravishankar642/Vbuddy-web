@@ -15,10 +15,12 @@ interface Info {
   accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean; sayintentionsSet?: boolean; beyondatc?: boolean };
   atcApps?: { sayintentions: AppStatus; beyondatc: AppStatus };
   voice?: {
-    settings: { enabled: boolean; device: string; model: string };
+    settings: { enabled: boolean; device: string; model: string; micEnabled?: boolean; micDevice?: string; cpu?: string };
     status: { state: "off" | "setup" | "starting" | "listening" | "error"; message: string | null; device: string | null; progress: number | null };
     devices: Array<{ name: string; default: boolean }>;
+    micDevices?: Array<{ name: string; default: boolean }>;
     models: Record<string, { mb: number; note: string }>;
+    recommended?: string;
   } | null;
   dataDir: string | null;
   host: { autostart: boolean | null; plugin: { available: boolean; dir: string | null; installed: boolean; upToDate: boolean } | null; canReconnect: boolean };
@@ -236,11 +238,27 @@ function renderVoice(i: Info) {
     }
     dev.value = v.settings.device;
   }
+  const micOn = $<HTMLInputElement>("micOn");
+  if (document.activeElement !== micOn) micOn.checked = !!v.settings.micEnabled;
+  $("micBox").hidden = !v.settings.micEnabled;
+  const mic = $<HTMLSelectElement>("micDevice");
+  if (document.activeElement !== mic) {
+    const list = v.micDevices ?? [];
+    const names = [...new Set([...list.map((d) => d.name), ...(v.settings.micDevice ? [v.settings.micDevice] : [])])];
+    const want = ["", ...names].join("\n");
+    if (mic.dataset.list !== want) {
+      mic.replaceChildren(new Option("Windows' default microphone", ""), ...names.map((n) => new Option(n + (list.find((d) => d.name === n)?.default ? " (default)" : ""), n)));
+      mic.dataset.list = want;
+    }
+    mic.value = v.settings.micDevice ?? "";
+  }
   const model = $<HTMLSelectElement>("voiceModel");
   if (document.activeElement !== model) {
-    if (!model.options.length) model.replaceChildren(...Object.entries(v.models).map(([k, m]) => new Option(`${k} (${m.mb} MB, ${m.note})`, k)));
+    if (!model.options.length) model.replaceChildren(...Object.entries(v.models).map(([k, m]) => new Option(`${k === v.recommended ? "★ " : ""}${k} (${m.mb >= 1000 ? (m.mb / 1024).toFixed(1) + " GB" : m.mb + " MB"}, ${m.note})`, k)));
     model.value = v.settings.model;
   }
+  const cpu = $<HTMLSelectElement>("voiceCpu");
+  if (document.activeElement !== cpu) cpu.value = v.settings.cpu ?? "balanced";
   const st = v.status;
   const el = $("voiceStatus");
   el.className = `status ${st.state === "listening" ? "ok" : st.state === "error" ? "bad" : "muted"}`;
@@ -253,7 +271,10 @@ function renderVoice(i: Info) {
 }
 $<HTMLInputElement>("voiceOn").onchange = (e) => void act("voice", { enabled: (e.target as HTMLInputElement).checked });
 $<HTMLSelectElement>("voiceDevice").onchange = (e) => void act("voice", { device: (e.target as HTMLSelectElement).value });
+$<HTMLInputElement>("micOn").onchange = (e) => void act("voice", { micEnabled: (e.target as HTMLInputElement).checked });
+$<HTMLSelectElement>("micDevice").onchange = (e) => void act("voice", { micDevice: (e.target as HTMLSelectElement).value });
 $<HTMLSelectElement>("voiceModel").onchange = (e) => void act("voice", { model: (e.target as HTMLSelectElement).value });
+$<HTMLSelectElement>("voiceCpu").onchange = (e) => void act("voice", { cpu: (e.target as HTMLSelectElement).value });
 $<HTMLButtonElement>("voiceDevices").onclick = async (e) => {
   const b = e.target as HTMLButtonElement;
   b.disabled = true;
@@ -344,6 +365,9 @@ function go(next: Page) {
       // The app itself, in the same wide layout as a tablet, with its own tab bar hidden (this sidebar picks the page).
       frame = document.createElement("iframe");
       frame.title = "VBuddy";
+      // The sim view's Full screen button needs the frame's permission.
+      frame.allow = "fullscreen";
+      frame.allowFullscreen = true;
       frame.src = `/?pc=1#${hash}`;
       document.querySelector('[data-page="map"]')!.append(frame);
     } else if (frame.contentWindow) frame.contentWindow.location.hash = hash;

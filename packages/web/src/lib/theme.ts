@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { airlinePalette } from "./airline-theme";
-import { airlineOf, type Airline } from "./airlines";
+import { AIRLINES, airlineOf, type Airline } from "./airlines";
 
 /** "system" follows the device; light and dark are the user's choice (kept on this device). */
 export type ThemePref = "system" | "light" | "dark";
@@ -57,7 +57,14 @@ function apply() {
 
 /** The callsign you're connected to VATSIM with (null when not connected): its airline colours the app. */
 export function setThemeCallsign(callsign: string | null) {
-  const next = airlineOf(callsign);
+  setTheme(airlineOf(callsign));
+}
+/** The app's colours from an airline's ICAO code (QTR), wherever it came from: network, plan or the sim. */
+export function setThemeAirline(icao: string | null) {
+  const a = icao ? AIRLINES[icao.toUpperCase()] : undefined;
+  setTheme(a ? { ...a, icao: icao!.toUpperCase() } : null);
+}
+function setTheme(next: (Airline & { icao: string }) | null) {
   if ((next?.icao ?? null) === (airline?.icao ?? null)) return;
   airline = next;
   apply();

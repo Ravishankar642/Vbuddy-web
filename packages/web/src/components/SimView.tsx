@@ -143,16 +143,45 @@ export function SimView({ b }: { b: BridgeSnapshot }) {
   const [hasChase, setHasChase] = useState(false);
   const camera = b.panel?.sys?.camera;
   const sys = (id: Extract<PanelCommand, { op: "sys" }>["id"], value?: number) => void panelCommand({ op: "sys", id, value });
+  // Full screen: the browser's own where it has one; otherwise (iPhone, the iOS app, a frame that may not go full
+  // screen) the picture fills the window itself, with a close button.
+  const [pseudo, setPseudo] = useState(false);
+  type FsEl = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+  type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void };
   const full = () => {
-    const el = box.current;
+    const el = box.current as FsEl | null;
+    const d = document as FsDoc;
     if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void el.requestFullscreen?.().catch(() => {});
+    if (pseudo) return setPseudo(false);
+    if (d.fullscreenElement || d.webkitFullscreenElement) {
+      if (d.exitFullscreen) void d.exitFullscreen().catch(() => {});
+      else d.webkitExitFullscreen?.();
+      return;
+    }
+    const can = (document.fullscreenEnabled || (d as FsDoc & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled) && (el.requestFullscreen || el.webkitRequestFullscreen);
+    if (!can) return setPseudo(true);
+    try {
+      const r = el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen!();
+      if (r && typeof (r as Promise<void>).catch === "function") (r as Promise<void>).catch(() => setPseudo(true));
+    } catch {
+      setPseudo(true);
+    }
   };
+  useEffect(() => {
+    if (!pseudo) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setPseudo(false);
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [pseudo]);
 
   return (
     <section className="card simview">
-      <div className="simview__box" ref={box} onDoubleClick={full}>
+      <div className={`simview__box${pseudo ? " is-pseudo" : ""}`} ref={box} onDoubleClick={full}>
+        {pseudo && (
+          <button type="button" className="simview__close" onClick={() => setPseudo(false)} aria-label="Leave full screen">
+            ✕
+          </button>
+        )}
         {src ? <img className="simview__img" src={src} alt="The simulator on your PC, live" /> : <p className="simview__wait">{b.link !== "open" ? "Waiting for the bridge…" : message || WAITING[state]}</p>}
         {src && (
           <span className="simview__badge" aria-live="off">
