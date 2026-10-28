@@ -210,3 +210,15 @@ test("BeyondATC log: read from the end as it grows, and from the start when Beyo
   off.tick();
   assert.equal(off.status().state, "off");
 });
+
+test("the speech engine comes from the newest release that has the Windows build, not the empty 'latest' one", async () => {
+  const { pickBinUrl } = await import("./whisper.js");
+  const rel = [
+    { tag_name: "v1.9.5", draft: false, published_at: "2026-10-06T17:39:17Z", assets: [] },
+    { tag_name: "b5454", draft: false, prerelease: true, published_at: "2026-10-06T16:51:27Z", assets: [{ name: "whisper-bin-Win32.zip", browser_download_url: "x32" }, { name: "whisper-bin-x64.zip", browser_download_url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip" }] },
+    { tag_name: "b5130", draft: false, published_at: "2026-09-11T05:29:10Z", assets: [{ name: "whisper-bin-x64.zip", browser_download_url: "older" }] },
+  ];
+  assert.equal(pickBinUrl(rel), "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip");
+  assert.equal(pickBinUrl([{ draft: false, assets: [] }]), null);
+  assert.equal(pickBinUrl({ message: "rate limited" }), null);
+});

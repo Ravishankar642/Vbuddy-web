@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+
+- **ATC voice to text: the speech engine downloads again.** whisper.cpp's newest release has no files, so VBuddy now takes the newest one that includes the Windows build.
+
 ## 2.0.0
 
 - **Ground: taxi routes from your simulator's scenery.** A new Ground tab reads the airport's taxiways, runways, holding points and stands straight from MSFS (2020 and 2024, add-on airports too) and draws them on the map. Plan a route to a runway or a stand, optionally via the taxiways you were given; VBuddy says it the way ATC would and guides you along it (turn onto, hold short, cross). A taxi clearance heard on the radio or sent by text is offered there with one tap.

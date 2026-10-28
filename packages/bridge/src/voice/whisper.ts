@@ -21,7 +21,27 @@ export const WHISPER_MODELS = {
 export type WhisperModel = keyof typeof WHISPER_MODELS;
 export const isWhisperModel = (m: unknown): m is WhisperModel => typeof m === "string" && m in WHISPER_MODELS;
 
-const BIN_URL = "https://github.com/ggml-org/whisper.cpp/releases/latest/download/whisper-bin-x64.zip";
+/**
+ * whisper.cpp's "latest" release (v1.9.5, say) often carries no files: the Windows builds are on the build-numbered
+ * pre-releases next to it (b5454...). So the newest release that has the CPU build is looked up; if GitHub can't be
+ * asked, a known good build is used.
+ */
+const RELEASES_API = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=20";
+const BIN_ASSET = "whisper-bin-x64.zip";
+export const BIN_FALLBACK_URL = "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip";
+
+/** The download address of the newest whisper.cpp Windows CPU build, from GitHub's release list. */
+export function pickBinUrl(releases: unknown): string | null {
+  if (!Array.isArray(releases)) return null;
+  const list = (releases as Array<{ draft?: boolean; published_at?: string; assets?: Array<{ name?: string; browser_download_url?: string }> }>)
+    .filter((r) => !r.draft && Array.isArray(r.assets))
+    .sort((a, b) => Date.parse(b.published_at ?? "") - Date.parse(a.published_at ?? ""));
+  for (const r of list) {
+    const a = r.assets!.find((x) => x.name === BIN_ASSET && typeof x.browser_download_url === "string");
+    if (a) return a.browser_download_url!;
+  }
+  return null;
+}
 const MODEL_URL = (file: string) => `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${file}`;
 const PORT = Number(process.env.VBUDDY_WHISPER_PORT) || 8911;
 
@@ -159,7 +179,20 @@ export class WhisperEngine implements SpeechEngine {
         if (process.platform !== "win32") throw new Error("The built-in speech engine is for Windows; set VBUDDY_WHISPER_URL to a whisper-server instead.");
         this.set({ state: "downloading", message: "Downloading the speech engine…", progress: 0 });
         const zip = join(this.dir, "whisper-bin-x64.zip");
-        await this.download(BIN_URL, zip, "the speech engine", [0, 0.08]);
+        let url = BIN_FALLBACK_URL;
+        try {
+          const r = await this.fetchFn(RELEASES_API, { headers: { accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(10_000) });
+          if (r.ok) url = pickBinUrl(await r.json()) ?? url;
+        } catch {
+          /* GitHub's API unreachable: the known build */
+        }
+        this.log.info(`ATC voice: downloading the speech engine from ${url}`);
+        try {
+          await this.download(url, zip, "the speech engine", [0, 0.08]);
+        } catch (e) {
+          if (url === BIN_FALLBACK_URL) throw e;
+          await this.download(BIN_FALLBACK_URL, zip, "the speech engine", [0, 0.08]);
+        }
         const files = unzipSync(new Uint8Array(await import("node:fs/promises").then((f) => f.readFile(zip))));
         rmSync(this.binDir, { recursive: true, force: true });
         for (const [name, data] of Object.entries(files)) {
