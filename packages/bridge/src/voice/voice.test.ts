@@ -129,7 +129,7 @@ test("voice to text: off until switched on and set up, then each transmission be
   assert.ok(v.clip(msg.clip!)!.length > 44);
   // Settings survive a restart.
   const again = new VoiceService(new FakeAudio(), new FakeEngine(), join(dir, "voice.json"), log);
-  assert.deepEqual(again.settings(), { enabled: true, device: "Headset", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" });
+  assert.deepEqual(again.settings(), { enabled: true, source: "apps", apps: ["vpilot", "xpilot", "altitude", "swift", "sayintentions", "beyondatc"], extraApps: "", device: "Headset", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" });
   await v.configure({ enabled: false });
   assert.equal(a.started, null);
 });
@@ -251,4 +251,21 @@ test("engine threads follow the CPU setting and leave the sim two cores", async 
   assert.equal(engineThreads("fast", 16), 8);
   assert.equal(engineThreads("fast", 6), 4);
   assert.equal(engineThreads("balanced", 2), 1);
+});
+
+test("voice to text listens to the ATC apps only by default, or a whole device when chosen", async () => {
+  const { appTokens } = await import("./loopback.js");
+  assert.deepEqual(appTokens(["vpilot", "sayintentions"], "MyClient.exe, vPilot"), ["vPilot", "SayIntentions", "MyClient"]);
+  const dir = mkdtempSync(join(tmpdir(), "vb-voice-apps-"));
+  const dev = new FakeAudio();
+  const apps = new FakeAudio();
+  const e = new FakeEngine();
+  e.st = { state: "ready", message: null, progress: null };
+  const v = new VoiceService(dev, e, join(dir, "voice.json"), log, () => null, null, apps);
+  await v.configure({ enabled: true, apps: ["vpilot", "beyondatc"] });
+  assert.equal(apps.started, "vPilot,BeyondATC");
+  assert.equal(dev.started, null);
+  await v.configure({ source: "device", device: "Headset" });
+  assert.equal(dev.started, "Headset");
+  assert.equal(apps.started, null);
 });

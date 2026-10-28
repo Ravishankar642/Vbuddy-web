@@ -24,3 +24,10 @@ test("your callsign is found however the recogniser wrote it", () => {
   assert.deepEqual(spokenCallsign("UAE5"), { words: ["EMIRATES"], suffix: "5" });
   assert.deepEqual(spokenCallsign("XYZ12"), { words: ["XYZ"], suffix: "12" });
 });
+
+test("an AI ATC app's text and a transcript of its voice are the same call", async () => {
+  const { sameTransmission } = await import("./index.js");
+  assert.equal(sameTransmission("Speedbird 123, taxi to holding point runway 27R via Bravo, Charlie 2.", "Speedbird one two three, taxi to holding point runway two seven right via Bravo Charlie two"), true);
+  assert.equal(sameTransmission("Speedbird 123, contact Mumbai Control 132.7", "Emirates 521, climb flight level 350"), false);
+  assert.equal(sameTransmission("Roger", "Roger"), false);
+});

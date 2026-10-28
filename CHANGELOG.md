@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.1
+
+- **Voice to text hears only the ATC apps.** By default VBuddy now captures only the sound of vPilot, xPilot, Altitude (IVAO), swift, SayIntentions.AI and BeyondATC, plus any program you add by name. The sim, music and everything else on the same headset are left out. "Everything on one output device" is still there as a choice. A SayIntentions or BeyondATC call that already arrived as text isn't transcribed a second time. Needs Windows 10 version 2004 or later.
+
 ## 2.1.0
 
 - **Taxi guidance that follows you.** The route is now worked out on the PC, so every device shows the same one. On the Flights tab a banner at the top gives the next instruction ("Turn left onto N2 in 720 m"). Short notes pop up for each turn, crossing and hold short, and a notification reaches your phone when the app is closed. Leave the route and VBuddy re-plans it from where you are, and the route clears itself after takeoff or once you're parked. Turn the banner, the notes and the notification on or off under Notifications → Taxi.

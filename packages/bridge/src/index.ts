@@ -12,7 +12,7 @@ import { FlightRecorder } from "./db/recorder.js";
 import { LegBook } from "./db/legs.js";
 import { EfbProxy } from "./efb/proxy.js";
 import { Airports, AtlasService } from "./atlas/atlas.js";
-import { airlineFromSim, formatMhz, isTaxiClearance, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
+import { airlineFromSim, formatMhz, sameTransmission, isTaxiClearance, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
 import { LandingStore } from "./landing/store.js";
 import { SectorLoader } from "./network/sector-loader.js";
 import { NetworkService } from "./network/service.js";
@@ -68,7 +68,7 @@ import { SimBridgeMcdu } from "./fms/simbridge-mcdu.js";
 import { FenixMcdu } from "./fms/fenix-mcdu.js";
 import { MockMcdu } from "./fms/mock-mcdu.js";
 import { MockVoiceFeed, VoiceService } from "./voice/service.js";
-import { NoAudio, WindowsLoopback } from "./voice/loopback.js";
+import { ATC_APPS, isAtcAppKey, NoAudio, WindowsLoopback } from "./voice/loopback.js";
 import { isCpuUse, RECOMMENDED_MODEL, WHISPER_MODELS, WhisperEngine, type WhisperModel } from "./voice/whisper.js";
 import type { OutputDevice } from "./voice/loopback.js";
 import { SayIntentionsLink } from "./atcapps/sayintentions.js";
@@ -408,6 +408,7 @@ async function main() {
         vLog,
         () => comms.myCallsign(),
         process.platform === "win32" ? new WindowsLoopback(vLog, "capture") : null,
+        process.platform === "win32" ? new WindowsLoopback(vLog, "apps") : null,
       );
   /** Who is talking on the frequency you're listening to: the online controller there, else just the frequency. */
   const stationOn = (hz: number | null): string => {
@@ -417,6 +418,10 @@ async function main() {
     return st ? st.callsign : `Radio ${mhz}`;
   };
   voice?.onTranscript((t) => {
+    // SayIntentions and BeyondATC give VBuddy their own text: a transcript of the same call isn't shown twice.
+    const since = Date.now() - 45_000;
+    const dup = comms.history().find((m) => m.ts >= since && (m.source === "sayintentions" || m.source === "beyondatc") && sameTransmission(m.text, t.text));
+    if (dup) return vLog.debug(`already have from ${dup.source}: ${t.text}`);
     // Your own calls (the microphone) go into the same conversation as yours; ATC's as theirs.
     const m =
       t.dir === "out"
@@ -631,7 +636,7 @@ async function main() {
       },
       accounts: { simbrief: integrations.get().simbrief, hoppieSet: integrations.get().hoppie !== "", owmSet: integrations.get().owm !== "", sayintentionsSet: integrations.get().sayintentions !== "", beyondatc: integrations.get().beyondatc },
       atcApps: { sayintentions: si.status(), beyondatc: batc.status() },
-      voice: voice ? { settings: voice.settings(), status: voice.status(), devices: voiceDevices, micDevices, models: WHISPER_MODELS, recommended: RECOMMENDED_MODEL } : null,
+      voice: voice ? { settings: voice.settings(), status: voice.status(), devices: voiceDevices, micDevices, models: WHISPER_MODELS, recommended: RECOMMENDED_MODEL, atcApps: ATC_APPS } : null,
       dataDir: cfg.dataDir,
       host: { autostart: autostartState(), plugin: pluginState(), canReconnect: source instanceof SimConnectSource },
       pause: pauser.status(),
@@ -680,6 +685,9 @@ async function main() {
         ...(typeof body.micEnabled === "boolean" ? { micEnabled: body.micEnabled } : {}),
         ...(typeof body.micDevice === "string" ? { micDevice: body.micDevice } : {}),
         ...(isCpuUse(body.cpu) ? { cpu: body.cpu } : {}),
+        ...(body.source === "apps" || body.source === "device" ? { source: body.source } : {}),
+        ...(Array.isArray(body.apps) ? { apps: body.apps.filter(isAtcAppKey) } : {}),
+        ...(typeof body.extraApps === "string" ? { extraApps: body.extraApps } : {}),
         ...(body.download === true ? { download: true } : {}),
       });
     } else if (action === "updateInstall") {

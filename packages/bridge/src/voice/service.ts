@@ -2,13 +2,19 @@ import { ATC_VOCABULARY, spokenCallsign, type VoiceStatus } from "@vbuddy/protoc
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Logger } from "../log.js";
-import type { AudioSource, OutputDevice } from "./loopback.js";
+import { appTokens, ATC_APPS, isAtcAppKey, type AtcAppKey, type AudioSource, type OutputDevice } from "./loopback.js";
 import { Segmenter, wav, type Clip } from "./vad.js";
 import { isCpuUse, isWhisperModel, type CpuUse, type SpeechEngine, type WhisperModel } from "./whisper.js";
 
 /** What is kept between runs (voice.json in the data folder). */
 export interface VoiceSettings {
   enabled: boolean;
+  /** apps: only the ATC apps' own sound (vPilot, SayIntentions...), nothing else; device: everything on one output. */
+  source: "apps" | "device";
+  /** The ATC apps listened to, with source "apps". */
+  apps: AtcAppKey[];
+  /** More program names to listen to, comma separated ("MyClient"). */
+  extraApps: string;
   /** Part of the output device's name ("Headset"); "" = the default output device. */
   device: string;
   model: WhisperModel;
@@ -19,7 +25,8 @@ export interface VoiceSettings {
   /** How much CPU the speech engine may take while the sim runs. */
   cpu: CpuUse;
 }
-const DEFAULTS: VoiceSettings = { enabled: false, device: "", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" };
+const ALL_APPS: AtcAppKey[] = ATC_APPS.map((a) => a.key);
+const DEFAULTS: VoiceSettings = { enabled: false, source: "apps", apps: ALL_APPS, extraApps: "", device: "", model: "large-v3-turbo-q5_0", micEnabled: false, micDevice: "", cpu: "balanced" };
 /** Recordings kept for playback in the app (memory only). */
 const MAX_CLIPS = 40;
 /** Transmissions waiting for the engine; older ones are dropped rather than falling minutes behind. */
@@ -64,9 +71,20 @@ export class VoiceService {
     private callsign: () => string | null = () => null,
     /** Your microphone, for your side of the conversation. */
     private mic: AudioSource | null = null,
+    /** Only some apps' sound (Windows 10 2004 and later). */
+    private appAudio: AudioSource | null = null,
   ) {
     this.s = this.load();
     engine.onStatus(() => this.changed());
+    for (const a of [audio, appAudio]) (a as { onDevice?: (cb: () => void) => void } | null)?.onDevice?.(() => this.changed());
+  }
+
+  /** What is listened to now: the ATC apps, or a whole output device. */
+  private source(): AudioSource {
+    return this.s.source === "apps" && this.appAudio ? this.appAudio : this.audio;
+  }
+  private target(): string {
+    return this.s.source === "apps" && this.appAudio ? appTokens(this.s.apps, this.s.extraApps).join(",") : this.s.device;
   }
 
   private load(): VoiceSettings {
@@ -75,6 +93,9 @@ export class VoiceService {
       const j = JSON.parse(readFileSync(this.file, "utf8")) as Partial<VoiceSettings>;
       return {
         enabled: j.enabled === true,
+        source: j.source === "device" ? "device" : "apps",
+        apps: Array.isArray(j.apps) ? j.apps.filter(isAtcAppKey) : ALL_APPS,
+        extraApps: typeof j.extraApps === "string" ? j.extraApps.slice(0, 200) : "",
         device: typeof j.device === "string" ? j.device.slice(0, 120) : "",
         model: isWhisperModel(j.model) ? j.model : DEFAULTS.model,
         micEnabled: j.micEnabled === true,
@@ -116,16 +137,32 @@ export class VoiceService {
 
   status(): VoiceStatus {
     const e = this.engine.status();
-    const base = { device: this.audio.current() ?? (this.s.device || null), model: this.s.model, progress: e.progress };
+    const apps = this.s.source === "apps" && !!this.appAudio;
+    const cur = this.source().current();
+    const base = { device: apps ? cur || "ATC apps" : (cur ?? (this.s.device || null)), model: this.s.model, progress: e.progress };
     if (!this.s.enabled) return { state: "off", message: null, ...base, progress: null };
     if (e.state === "missing") return { state: "setup", message: e.message ?? "The speech engine needs downloading.", ...base };
     if (e.state === "downloading") return { state: "starting", message: e.message, ...base };
     if (e.state === "error") return { state: "error", message: e.message, ...base };
     if (this.problem) return { state: "error", message: this.problem, ...base };
     if (e.state === "starting" || !this.listening) return { state: "starting", message: e.message ?? "Starting…", ...base };
-    const hint = this.cutsInARow >= 3 ? "Hearing sound without a break: if the sim plays on this device too, give vPilot its own output (a headset) and pick that." : null;
+    const hint = apps
+      ? this.appsNote(cur)
+      : this.cutsInARow >= 3
+        ? "Hearing sound without a break: the sim plays on this device too. Set Listen to: ATC apps only."
+        : null;
     const micNote = this.s.micEnabled ? (this.micProblem ? `Microphone: ${this.micProblem}` : this.micListening ? `Your side too, from ${this.mic?.current() ?? "the microphone"}.` : null) : null;
     return { state: "listening", message: [hint, micNote].filter(Boolean).join(" ") || null, ...base };
+  }
+
+  private appsNote(cur: string | null): string | null {
+    const probs = (this.appAudio as { problems?: Map<string, string> } | null)?.problems;
+    const bad = probs && probs.size ? `Couldn't listen to ${[...probs.keys()].join(", ")} on its own: that needs Windows 10 version 2004 or later. Pick Listen to: a whole output device instead.` : null;
+    if (cur) return bad;
+    const names = ATC_APPS.filter((a) => this.s.apps.includes(a.key)).map((a) => a.name);
+    const extra = this.s.extraApps.trim();
+    const all = [...names, ...(extra ? [extra] : [])];
+    return bad ?? (all.length ? `Waiting for ${all.join(", ")} to start. Only their sound is turned into text.` : "No ATC apps chosen to listen to.");
   }
 
   /** Change the settings from the VBuddy window. `download` allows fetching the engine and model. */
@@ -134,13 +171,16 @@ export class VoiceService {
     if (p.cpu !== undefined && !isCpuUse(p.cpu)) return "Unknown CPU setting.";
     const next: VoiceSettings = {
       enabled: p.enabled ?? this.s.enabled,
+      source: p.source === "device" || p.source === "apps" ? p.source : this.s.source,
+      apps: Array.isArray(p.apps) ? p.apps.filter(isAtcAppKey) : this.s.apps,
+      extraApps: typeof p.extraApps === "string" ? p.extraApps.slice(0, 200) : this.s.extraApps,
       device: typeof p.device === "string" ? p.device.slice(0, 120) : this.s.device,
       model: p.model ?? this.s.model,
       micEnabled: p.micEnabled ?? this.s.micEnabled,
       micDevice: typeof p.micDevice === "string" ? p.micDevice.slice(0, 120) : this.s.micDevice,
       cpu: p.cpu ?? this.s.cpu,
     };
-    const restart = next.cpu !== this.s.cpu || next.device !== this.s.device || next.model !== this.s.model || next.enabled !== this.s.enabled || next.micEnabled !== this.s.micEnabled || next.micDevice !== this.s.micDevice;
+    const restart = next.source !== this.s.source || next.apps.join() !== this.s.apps.join() || next.extraApps !== this.s.extraApps || next.cpu !== this.s.cpu || next.device !== this.s.device || next.model !== this.s.model || next.enabled !== this.s.enabled || next.micEnabled !== this.s.micEnabled || next.micDevice !== this.s.micDevice;
     this.s = next;
     this.save();
     if (!next.enabled) {
@@ -163,8 +203,11 @@ export class VoiceService {
     this.seg = new Segmenter();
     this.seg.onClip((c) => this.enqueue(c, "in"));
     this.startMic();
-    this.audio.start(
-      this.s.device,
+    const src = this.source();
+    if (src !== this.audio) this.audio.stop();
+    if (src !== this.appAudio) this.appAudio?.stop();
+    src.start(
+      this.target(),
       (samples, at) => {
         if (!this.listening) {
           this.listening = true;
@@ -215,6 +258,7 @@ export class VoiceService {
 
   private stopAudio() {
     this.audio.stop();
+    this.appAudio?.stop();
     this.mic?.stop();
     this.micSeg = null;
     this.micListening = false;

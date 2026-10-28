@@ -146,9 +146,15 @@
               <h2>ATC voice to text</h2>
               <label class="switch"><input type="checkbox" id="voiceOn" /><span class="track"></span><span class="sr">ATC voice to text</span></label>
             </div>
-            <p class="muted">Turns what ATC says on your radio into text in the app's Comms tab, with your callsign picked out. It all happens on this PC: no audio or text is sent anywhere. Pick the output vPilot (or BeyondATC / SayIntentions) plays ATC on, ideally a headset the simulator's own sound doesn't use.</p>
+            <p class="muted">Turns what ATC says on your radio into text in the app's Comms tab, with your callsign picked out. It all happens on this PC: no audio or text is sent anywhere. By default it listens only to the ATC apps (vPilot, SayIntentions, BeyondATC and others), so the sim's own sound is left out.</p>
+            <label class="field"><b>Listen to</b><select class="text" id="voiceSource"><option value="apps">ATC apps only: their sound and nothing else (recommended)</option><option value="device">Everything on one output device</option></select></label>
+            <div id="appsBox">
+              <div class="appchecks" id="voiceApps"></div>
+              <label class="field"><b>Other apps</b><small class="muted">Program names, comma separated, for an ATC app not listed (as in Task Manager, without .exe).</small><input class="text" id="voiceExtra" type="text" maxlength="200" spellcheck="false" placeholder="e.g. MyAtcClient" /></label>
+              <small class="muted">The sim, music and everything else stay out, even on the same headset. SayIntentions and BeyondATC calls that already arrive as text aren't shown twice. Needs Windows 10 version 2004 or later.</small>
+            </div>
             <div class="pausegrid">
-              <label class="field"><b>Listen to</b><select class="text" id="voiceDevice"><option value="">Windows' default output</option></select></label>
+              <label class="field" id="deviceBox"><b>Output device</b><select class="text" id="voiceDevice"><option value="">Windows' default output</option></select></label>
               <label class="field"><b>Speech model</b><select class="text" id="voiceModel"></select></label>
               <label class="field"><b>CPU use</b><select class="text" id="voiceCpu"><option value="light">Light: 2 cores, the sim first</option><option value="balanced">Balanced: up to 4 cores (recommended)</option><option value="fast">Fast: up to 8 cores, quickest text</option></select></label>
             </div>

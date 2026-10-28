@@ -15,7 +15,8 @@ interface Info {
   accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean; sayintentionsSet?: boolean; beyondatc?: boolean };
   atcApps?: { sayintentions: AppStatus; beyondatc: AppStatus };
   voice?: {
-    settings: { enabled: boolean; device: string; model: string; micEnabled?: boolean; micDevice?: string; cpu?: string };
+    settings: { enabled: boolean; device: string; model: string; micEnabled?: boolean; micDevice?: string; cpu?: string; source?: "apps" | "device"; apps?: string[]; extraApps?: string };
+    atcApps?: Array<{ key: string; name: string }>;
     status: { state: "off" | "setup" | "starting" | "listening" | "error"; message: string | null; device: string | null; progress: number | null };
     devices: Array<{ name: string; default: boolean }>;
     micDevices?: Array<{ name: string; default: boolean }>;
@@ -257,6 +258,29 @@ function renderVoice(i: Info) {
     if (!model.options.length) model.replaceChildren(...Object.entries(v.models).map(([k, m]) => new Option(`${k === v.recommended ? "★ " : ""}${k} (${m.mb >= 1000 ? (m.mb / 1024).toFixed(1) + " GB" : m.mb + " MB"}, ${m.note})`, k)));
     model.value = v.settings.model;
   }
+  const srcSel = $<HTMLSelectElement>("voiceSource");
+  const appsMode = (v.settings.source ?? "apps") === "apps" && !!v.atcApps;
+  srcSel.hidden = !v.atcApps;
+  if (document.activeElement !== srcSel) srcSel.value = appsMode ? "apps" : "device";
+  $("appsBox").hidden = !appsMode;
+  $("deviceBox").hidden = appsMode;
+  const box = $("voiceApps");
+  if (v.atcApps && !box.childElementCount) {
+    box.replaceChildren(
+      ...v.atcApps.map((a) => {
+        const l = document.createElement("label");
+        const c = document.createElement("input");
+        c.type = "checkbox";
+        c.value = a.key;
+        c.onchange = () => void act("voice", { apps: [...box.querySelectorAll<HTMLInputElement>("input:checked")].map((x) => x.value) });
+        l.append(c, " " + a.name);
+        return l;
+      }),
+    );
+  }
+  for (const c of box.querySelectorAll<HTMLInputElement>("input")) c.checked = (v.settings.apps ?? []).includes(c.value);
+  const extra = $<HTMLInputElement>("voiceExtra");
+  if (document.activeElement !== extra) extra.value = v.settings.extraApps ?? "";
   const cpu = $<HTMLSelectElement>("voiceCpu");
   if (document.activeElement !== cpu) cpu.value = v.settings.cpu ?? "balanced";
   const st = v.status;
@@ -274,6 +298,8 @@ $<HTMLSelectElement>("voiceDevice").onchange = (e) => void act("voice", { device
 $<HTMLInputElement>("micOn").onchange = (e) => void act("voice", { micEnabled: (e.target as HTMLInputElement).checked });
 $<HTMLSelectElement>("micDevice").onchange = (e) => void act("voice", { micDevice: (e.target as HTMLSelectElement).value });
 $<HTMLSelectElement>("voiceModel").onchange = (e) => void act("voice", { model: (e.target as HTMLSelectElement).value });
+$<HTMLSelectElement>("voiceSource").onchange = (e) => void act("voice", { source: (e.target as HTMLSelectElement).value });
+$<HTMLInputElement>("voiceExtra").onchange = (e) => void act("voice", { extraApps: (e.target as HTMLInputElement).value });
 $<HTMLSelectElement>("voiceCpu").onchange = (e) => void act("voice", { cpu: (e.target as HTMLSelectElement).value });
 $<HTMLButtonElement>("voiceDevices").onclick = async (e) => {
   const b = e.target as HTMLButtonElement;

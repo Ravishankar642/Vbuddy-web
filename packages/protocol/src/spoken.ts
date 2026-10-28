@@ -120,3 +120,18 @@ export function mentionsCallsign(text: string, callsign: string | null | undefin
   // "SPEEDBIRD123" as one word.
   return t.some((w) => w.endsWith(want.suffix) && close(w.slice(0, -want.suffix.length), name));
 }
+
+/**
+ * Two texts of the same radio call: the AI ATC app's own text and VBuddy's transcript of its voice, say. Words are
+ * compared after normalising (numbers to digits); most of the shorter one's words must be in the other.
+ */
+export function sameTransmission(a: string, b: string): boolean {
+  const words = (t: string) => new Set(normaliseSpoken(t).flatMap((w) => w.replace(/[0-9]+/g, " ").split(" ")).filter((w) => w.length >= 2));
+  const x = words(a);
+  const y = words(b);
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x];
+  if (small.size < 3) return false;
+  let hit = 0;
+  for (const w of small) if (big.has(w)) hit++;
+  return hit / small.size >= 0.6;
+}
