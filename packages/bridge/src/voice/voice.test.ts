@@ -47,6 +47,43 @@ test("transmissions are cut out of the stream at their silences", () => {
   assert.equal(clips[0]!.cut, false);
 });
 
+/** Calls as [start, end, loudness]; `hiss` false is the ATC apps alone: nothing at all between calls. */
+function calls(totalS: number, list: Array<[number, number, number]>, hiss = true): Int16Array {
+  const out = new Int16Array(totalS * RATE);
+  let seed = 11;
+  for (let i = 0; i < out.length; i++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    const t = i / RATE;
+    const c = list.find(([a, b]) => t >= a && t < b);
+    // Speech-like: a tone that swells and fades a few times a second, with the station's own radio noise.
+    const env = c ? 0.55 + 0.45 * Math.sin(2 * Math.PI * 3 * t) : 0;
+    const noise = hiss || c ? ((seed / 0x7fffffff) * 2 - 1) * 60 : 0;
+    out[i] = Math.round(noise + (c ? Math.sin(2 * Math.PI * 400 * t) * c[2] * env : 0));
+  }
+  return out;
+}
+const cutUp = (a: Int16Array) => {
+  const seg = new Segmenter();
+  const clips: Clip[] = [];
+  seg.onClip((c) => clips.push(c));
+  for (let i = 0; i < a.length; i += 1600) seg.push(a.subarray(i, i + 1600), (i / RATE) * 1000);
+  return clips;
+};
+
+test("the next station straight after the push-to-talk is let go is its own transmission", () => {
+  // Listening to the ATC apps: 200 ms of nothing between a pilot and the controller.
+  const clips = cutUp(calls(8, [[1, 3, 9000], [3.2, 5.5, 9000]], false));
+  assert.equal(clips.length, 2);
+  assert.ok(clips[0]!.samples.length / RATE < 2.5, `first ${clips[0]!.samples.length / RATE}`);
+});
+
+test("a different station after a short gap is split off, the same one pausing isn't", () => {
+  // A loud controller, 350 ms, then a quiet pilot: two calls even with the radio hiss in between.
+  assert.equal(cutUp(calls(9, [[1, 3.5, 9000], [3.85, 6, 2200]])).length, 2);
+  // One controller taking a breath for 400 ms.
+  assert.equal(cutUp(calls(9, [[1, 3.5, 9000], [3.9, 6, 8000]])).length, 1);
+});
+
 test("a stream that never goes quiet is cut at the maximum length", () => {
   const seg = new Segmenter({ maxMs: 3000 });
   const clips: Clip[] = [];

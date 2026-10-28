@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.2
+
+- **Voice to text: one message per transmission.** Calls that followed each other closely came out as one message. A transmission now ends as soon as the radio goes quiet after the push-to-talk is released. When the next station answers after a short gap at a clearly different loudness, its call is split off too. The pause before the end of a call is also shorter (0.65 s instead of 0.8 s).
+
 ## 2.1.1
 
 - **Voice to text hears only the ATC apps.** By default VBuddy now captures only the sound of vPilot, xPilot, Altitude (IVAO), swift, SayIntentions.AI and BeyondATC, plus any program you add by name. The sim, music and everything else on the same headset are left out. "Everything on one output device" is still there as a choice. A SayIntentions or BeyondATC call that already arrived as text isn't transcribed a second time. Needs Windows 10 version 2004 or later.

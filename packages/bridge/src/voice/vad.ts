@@ -1,6 +1,9 @@
 /*
  * Cutting radio transmissions out of a continuous audio stream (16 kHz, mono, 16-bit): a transmission starts when the
- * level rises well above the background, and ends after a short silence. Pure, so it is tested with made-up audio.
+ * level rises well above the background. It ends when the radio goes dead (the push-to-talk released: listening to
+ * the ATC apps alone, nothing at all plays between calls), after a short silence, or where, after a brief gap, a
+ * different station starts talking (each transmitter comes in at its own level). Pure, so it is tested with made-up
+ * audio.
  */
 
 export const RATE = 16_000;
@@ -30,6 +33,16 @@ export interface VadOptions {
   maxMs?: number;
   /** Audio kept from before the start (the first syllable is often quieter). */
   preRollMs?: number;
+  /** Below this (dBFS) the radio is dead: nothing is playing at all. */
+  deadDbfs?: number;
+  /** Dead air that ends a transmission straight away (the push-to-talk let go). */
+  deadMs?: number;
+  /** A gap at least this long may be the next station answering... */
+  splitGapMs?: number;
+  /** ...when the speech after it is this much louder or quieter than before it. */
+  splitDb?: number;
+  /** Speech after the gap listened to before deciding. */
+  probeMs?: number;
 }
 
 const dbfs = (frame: Int16Array) => {
@@ -55,10 +68,15 @@ export class Segmenter {
   /** Frames of pre-roll at the start of the current transmission. */
   private preLen = 0;
   private clock = 0;
+  /** Each frame's level in the current transmission. */
+  private levels: number[] = [];
+  private dead = 0;
+  /** A gap that may separate two stations: where the speech before it ended, and where it started again. */
+  private gap: { end: number; resume: number } | null = null;
   private cbs: Array<(c: Clip) => void> = [];
 
   constructor(o: VadOptions = {}) {
-    this.o = { onDb: 12, offDb: 7, minDbfs: -48, hangMs: 800, minMs: 500, maxMs: 28_000, preRollMs: 250, ...o };
+    this.o = { onDb: 12, offDb: 7, minDbfs: -48, hangMs: 650, minMs: 500, maxMs: 28_000, preRollMs: 250, deadDbfs: -75, deadMs: 120, splitGapMs: 250, splitDb: 6, probeMs: 300, ...o };
   }
 
   onClip(cb: (c: Clip) => void) {
@@ -99,6 +117,7 @@ export class Segmenter {
       if (this.loud >= 3) {
         this.speaking = true;
         this.cur = [...this.pre];
+        this.levels = this.cur.map(dbfs);
         this.curLen = this.cur.length;
         // The three frames that started it are speech; the rest of the pre-roll isn't.
         this.preLen = Math.max(0, this.cur.length - 3);
@@ -106,18 +125,62 @@ export class Segmenter {
         this.lastLoudLen = this.curLen;
         this.pre = [];
         this.quiet = 0;
+        this.dead = 0;
+        this.gap = null;
       }
       return;
     }
     this.cur.push(f);
+    this.levels.push(level);
     this.curLen++;
     if (stillOn) {
+      // Speech again after a gap long enough to be another station: listen a little, then compare.
+      if (this.quiet * frameMs >= this.o.splitGapMs && !this.gap) this.gap = { end: this.lastLoudLen, resume: this.curLen - 1 };
       this.quiet = 0;
       this.lastLoudLen = this.curLen;
     } else this.quiet++;
+    this.dead = level < this.o.deadDbfs ? this.dead + 1 : 0;
     const lenMs = this.curLen * frameMs;
-    if (this.quiet * frameMs >= this.o.hangMs) this.finish(at, false);
-    else if (lenMs >= this.o.maxMs) this.finish(at, true);
+    if (this.dead * frameMs >= this.o.deadMs) return this.finish(at, false);
+    if (this.quiet * frameMs >= this.o.hangMs) return this.finish(at, false);
+    if (lenMs >= this.o.maxMs) return this.finish(at, true);
+    if (this.gap && (this.curLen - this.gap.resume) * frameMs >= this.o.probeMs) {
+      const g = this.gap;
+      this.gap = null;
+      const before = this.speechLevel(this.preLen, g.end);
+      const after = this.speechLevel(g.resume, this.curLen);
+      if (before !== null && after !== null && Math.abs(before - after) >= this.o.splitDb) this.split(g.end, g.resume);
+    }
+  }
+
+  /** The typical level of the speech between two frames (the median of its loud frames), if there is enough of it. */
+  private speechLevel(from: number, to: number): number | null {
+    const gate = Math.max(this.o.minDbfs, this.floor + this.o.onDb);
+    const l = this.levels.slice(from, to).filter((x) => x > gate).sort((a, b) => a - b);
+    return l.length >= 5 ? l[Math.floor(l.length / 2)]! : null;
+  }
+
+  /** Two stations in one: what came before the gap goes out as its own transmission, the rest carries on. */
+  private split(end: number, resume: number) {
+    const frameMs = (FRAME / RATE) * 1000;
+    const tail = Math.ceil(150 / frameMs);
+    const first = this.cur.slice(0, Math.min(resume, end + tail));
+    if ((end - this.preLen) * frameMs >= this.o.minMs) this.emit(first, this.curStart, false);
+    const start = Math.max(end, resume - Math.ceil(this.o.preRollMs / frameMs));
+    this.cur = this.cur.slice(start);
+    this.levels = this.levels.slice(start);
+    this.curStart += start * frameMs;
+    this.curLen = this.cur.length;
+    this.preLen = resume - start;
+    this.lastLoudLen = this.curLen;
+  }
+
+  private emit(frames: Int16Array[], startAt: number, cut: boolean) {
+    const frameMs = (FRAME / RATE) * 1000;
+    const samples = new Int16Array(frames.length * FRAME);
+    frames.forEach((fr, i) => samples.set(fr, i * FRAME));
+    const clip: Clip = { samples, startAt, endAt: startAt + frames.length * frameMs, cut };
+    for (const cb of this.cbs) cb(clip);
   }
 
   private finish(at: number, cut: boolean) {
@@ -125,17 +188,16 @@ export class Segmenter {
     // Trim the trailing silence, keeping a little.
     const keep = cut ? this.curLen : Math.min(this.curLen, this.lastLoudLen + Math.ceil(150 / frameMs));
     const frames = this.cur.slice(0, keep);
+    const loud = this.lastLoudLen - this.preLen;
     this.speaking = false;
     this.cur = [];
+    this.levels = [];
     this.loud = 0;
     this.quiet = 0;
-    const ms = frames.length * frameMs;
+    this.dead = 0;
+    this.gap = null;
     // Judged on the loud part only, not the pre-roll and the silence after.
-    if ((this.lastLoudLen - this.preLen) * frameMs < this.o.minMs) return;
-    const samples = new Int16Array(frames.length * FRAME);
-    frames.forEach((fr, i) => samples.set(fr, i * FRAME));
-    const clip: Clip = { samples, startAt: this.curStart, endAt: this.curStart + ms, cut };
-    for (const cb of this.cbs) cb(clip);
+    if (loud * frameMs >= this.o.minMs) this.emit(frames, this.curStart, cut);
     void at;
   }
 }
