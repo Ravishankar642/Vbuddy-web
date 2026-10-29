@@ -31,10 +31,13 @@ export function cleanModel(raw: string): string {
 }
 // One definition + request per extra variable, so a name the sim rejects only
 // loses that one value instead of shifting the layout of the others.
+// rate: "touchdown" = every sim frame but only when it changes (it changes at touchdown, and that frame matters);
+// "slow" = once a second, only when it changes.
 const EXTRAS = [
   { def: 3, req: 3, name: "PLANE TOUCHDOWN NORMAL VELOCITY", units: "feet per second", key: "touchdownNormalVelFps", slow: false },
-  { def: 4, req: 4, name: "AMBIENT WIND VELOCITY", units: "knots", key: "windKt", slow: false },
-  { def: 5, req: 5, name: "AMBIENT WIND DIRECTION", units: "degrees", key: "windFromDeg", slow: false },
+  // The wind: once a second is plenty (the touchdown report and the Live page), not every frame.
+  { def: 4, req: 4, name: "AMBIENT WIND VELOCITY", units: "knots", key: "windKt", slow: true },
+  { def: 5, req: 5, name: "AMBIENT WIND DIRECTION", units: "degrees", key: "windFromDeg", slow: true },
   // Aircraft-alert inputs: once a second is plenty, and only when the value changes.
   { def: 6, req: 6, name: "FUEL TOTAL QUANTITY WEIGHT", units: "pounds", key: "fuelLbs", slow: true },
   { def: 7, req: 7, name: "NUMBER OF ENGINES", units: "number", key: "engineCount", slow: true },
@@ -125,6 +128,8 @@ function decode(b: RawBuffer): Telemetry {
 
 export class SimConnectSource implements SimSource {
   private handle: ConnectionHandle | null = null;
+  /** Sim frames skipped between telemetry samples (see perf.ts: fewer in the landing window, more in cruise). */
+  private skip = 3;
   private sampleCbs: Array<(t: Telemetry, at: number) => void> = [];
   private extrasCbs: Array<(e: SimExtras, at: number) => void> = [];
   private extras: SimExtras = EMPTY_EXTRAS;
@@ -227,6 +232,21 @@ export class SimConnectSource implements SimSource {
     this.retryTimer = setTimeout(() => void this.connect(), RETRY_MS);
   }
 
+  /** How many sim frames to skip between telemetry samples; applied straight away when connected. */
+  setFrameSkip(n: number) {
+    const v = Math.max(0, Math.min(30, Math.round(n)));
+    if (v === this.skip) return;
+    this.skip = v;
+    if (this.handle) this.applySkip(this.handle);
+  }
+  private applySkip(h: ConnectionHandle) {
+    try {
+      h.requestDataOnSimObject(REQ_TELEMETRY, DEF_TELEMETRY, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, 0, 0, this.skip, 0);
+    } catch (e) {
+      log.warn(`Couldn't change the telemetry rate: ${errText(e)}`);
+    }
+  }
+
   private async connect() {
     if (this.stopped) return;
     let handle: ConnectionHandle;
@@ -255,7 +275,7 @@ export class SimConnectSource implements SimSource {
     handle.addToDataDefinition(DEF_IDENT, "ATC FLIGHT NUMBER", null, SimConnectDataType.STRING8);
     handle.requestDataOnSimObject(REQ_IDENT, DEF_IDENT, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
 
-    handle.requestDataOnSimObject(REQ_TELEMETRY, DEF_TELEMETRY, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME);
+    this.applySkip(handle);
     handle.requestDataOnSimObject(
       REQ_TITLE,
       DEF_TITLE,
@@ -269,7 +289,7 @@ export class SimConnectSource implements SimSource {
       const sendId = handle.addToDataDefinition(x.def, x.name, x.units, SimConnectDataType.FLOAT64);
       this.extrasSendIds.set(sendId, x.name);
       if (x.slow) handle.requestDataOnSimObject(x.req, x.def, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
-      else handle.requestDataOnSimObject(x.req, x.def, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME);
+      else handle.requestDataOnSimObject(x.req, x.def, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
     }
     handle.subscribeToSystemEvent(EVT_PAUSE, "Pause");
     handle.subscribeToSystemEvent(EVT_SIM, "Sim");

@@ -2,6 +2,8 @@ import qrcode from "qrcode-generator";
 
 /** What the bridge tells this window (see consoleInfo in the bridge's index.ts). */
 interface Info {
+  /** Lite mode; nobody looking; in the landing window. */
+  perf?: { lite: boolean; background: boolean; landing: boolean };
   version: string;
   port: number;
   mock: boolean;
@@ -80,7 +82,8 @@ async function copy(text: string, button: HTMLButtonElement) {
 
 let lastNote = "";
 async function call(path: string, body?: unknown): Promise<Info | null> {
-  const res = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json", "x-vbuddy-console": "1" }, body: JSON.stringify(body) });
+  // The GET every 2 s tells the bridge whether this window is on screen: closed or minimised, it does less.
+  const res = await fetch(path, body === undefined ? { headers: { "x-vbuddy-visible": document.hidden ? "0" : "1" } } : { method: "POST", headers: { "content-type": "application/json", "x-vbuddy-console": "1" }, body: JSON.stringify(body) });
   if (res.status === 404) throw new Error("not-local");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const j = (await res.json()) as Info | { info: Info; note?: string };
@@ -95,6 +98,8 @@ function banner(text: string | null) {
 }
 
 function render(i: Info) {
+  const lite = $<HTMLInputElement>("liteOn");
+  if (document.activeElement !== lite) lite.checked = !!i.perf?.lite;
   info = i;
   setText($("version"), `Version ${i.version}${i.mock ? " (test flight)" : ""}`);
 
@@ -313,7 +318,9 @@ $<HTMLButtonElement>("voiceDevices").onclick = async (e) => {
 $<HTMLButtonElement>("voiceSetup").onclick = () => void act("voice", { enabled: true, download: true });
 $<HTMLInputElement>("batcOn").onchange = (e) => void act("integrations", { beyondatc: (e.target as HTMLInputElement).checked });
 
-async function act(name: "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice", body: object = {}): Promise<boolean> {
+$<HTMLInputElement>("liteOn").onchange = (e) => void act("lite", { on: (e.target as HTMLInputElement).checked });
+
+async function act(name: "lite" | "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice", body: object = {}): Promise<boolean> {
   busy = true;
   try {
     const next = await call(`/api/console/${name}`, body);
@@ -327,6 +334,9 @@ async function act(name: "relay" | "newCode" | "forget" | "integrations" | "auto
     busy = false;
   }
 }
+
+// Minimised or shown again: tell the bridge straight away rather than at the next check.
+document.addEventListener("visibilitychange", () => void poll());
 
 async function poll() {
   try {

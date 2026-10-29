@@ -69,6 +69,7 @@ import { FenixMcdu } from "./fms/fenix-mcdu.js";
 import { MockMcdu } from "./fms/mock-mcdu.js";
 import { MockVoiceFeed, VoiceService } from "./voice/service.js";
 import { ATC_APPS, isAtcAppKey, NoAudio, WindowsLoopback } from "./voice/loopback.js";
+import { frameSkip, PerfService, type PerfState } from "./perf.js";
 import { isCpuUse, RECOMMENDED_MODEL, WHISPER_MODELS, WhisperEngine, type WhisperModel } from "./voice/whisper.js";
 import type { OutputDevice } from "./voice/loopback.js";
 import { SayIntentionsLink } from "./atcapps/sayintentions.js";
@@ -134,6 +135,8 @@ async function main() {
       logger("flightlog").warn(`Couldn't total up the flights before clearing old telemetry: ${(e as Error).message}`);
     }
     recorder.prune(cfg.keepHours);
+    const m = db?.maintain();
+    if (m?.vacuumed) logger("flightlog").info(`Flight log compacted: ${m.freedMb} MB of space from old telemetry given back.`);
   };
   if (db && cfg.keepHours > 0) {
     recorder = new FlightRecorder(db, hub.sessionId, cfg.mock ? "mock" : "simconnect", () => source.status().aircraftTitle ?? "", logger("flightlog"), {}, () => briefingRef?.cachedEndpoints() ?? null);
@@ -430,6 +433,23 @@ async function main() {
     vLog.debug(`heard on ${m.thread}: ${t.text}`);
   });
   voice?.onChange(() => comms.extrasChanged());
+
+  // How hard the bridge works: Lite mode, nobody looking (only the essentials), and the landing (nothing heavy).
+  const perf = new PerfService(cfg.dataDir ? join(cfg.dataDir, "performance.json") : null, logger("perf"));
+  source.onSample((t) => perf.sample(t));
+  source.onStatus((s) => {
+    if (!s.connected) perf.simLost();
+  });
+  const applyPerf = (st: PerfState) => {
+    if (source instanceof SimConnectSource) source.setFrameSkip(frameSkip(st));
+    (systems as { setMode?: (m: { paused: boolean; lite: boolean }) => void }).setMode?.({ paused: st.background || st.landing, lite: st.lite });
+    hub.setRate(st.lite ? 2 : null);
+    network?.setLite(st.lite);
+    voice?.hold(st.landing);
+    voice?.setLite(st.lite);
+  };
+  perf.onChange((st) => applyPerf(st));
+  applyPerf(perf.state());
   const mockVoice = cfg.mock ? new MockVoiceFeed((t) => comms.addExternal({ source: "voice", text: t.text, from: stationOn(comms.listeningHz()) }), () => comms.myCallsign() ?? "BAW123") : null;
   const relayTag = randomBytes(24).toString("base64url");
 
@@ -617,6 +637,7 @@ async function main() {
       version: VERSION,
       port: cfg.port,
       mock: cfg.mock,
+      perf: perf.state(),
       addresses: cfg.host === "0.0.0.0" ? lanAddresses().map((a) => `http://${a}:${cfg.port}`) : [`http://${cfg.host}:${cfg.port}`],
       sim: { connected: source.status().connected, aircraft: source.status().aircraftTitle || null },
       vpilot: { linked: comms.state().net.pluginLinked },
@@ -672,6 +693,8 @@ async function main() {
       return err ?? undefined;
     } else if (action === "updateCheck") {
       return updater.check("manual").then((st) => (st.status.kind === "error" ? st.text : undefined));
+    } else if (action === "lite") {
+      perf.setLite(body.on === true);
     } else if (action === "voice") {
       if (!voice) return "Voice to text isn't available in a test flight.";
       if (body.listDevices === true) {
@@ -708,7 +731,7 @@ async function main() {
   };
 
   try {
-    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs }, briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, taxi: taxiGuide, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
+    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs, seen: (v) => perf.consoleSeen(v) }, perf, setVoice: async (on) => (voice ? voice.configure({ enabled: on }) : "Voice to text isn't available in a test flight."), briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, taxi: taxiGuide, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EADDRINUSE") log.error(`Port ${cfg.port} is already in use. Is another bridge running? Use --port to pick another.`);

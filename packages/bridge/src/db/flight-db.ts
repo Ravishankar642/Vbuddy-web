@@ -164,7 +164,8 @@ export class FlightDb {
       if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
       const db = new sqlite.DatabaseSync(file);
       try {
-        db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;");
+        // journal_size_limit: the write-ahead log is cut back to 8 MB after each checkpoint (it grew past 100 MB).
+        db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000; PRAGMA journal_size_limit = 8388608; PRAGMA temp_store = MEMORY;");
         db.exec(SCHEMA);
         // Databases made before the distance was kept get the column added.
         const cols = db.prepare("PRAGMA table_info(flights)").all() as Array<{ name: string }>;
@@ -461,6 +462,38 @@ export class FlightDb {
   }
 
   /* ------------------------------------------------------------ lifecycle */
+
+  /**
+   * Keeps the file small: writes the log back into the database and empties it, and when more than a quarter of the
+   * file (and over 16 MB) is space left by old telemetry, compacts it (well under a second for a typical log).
+   * Returns what it did, for the log.
+   */
+  maintain(): { walTrimmed: boolean; vacuumed: boolean; freedMb: number } {
+    let walTrimmed = false;
+    let vacuumed = false;
+    let freedMb = 0;
+    try {
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      walTrimmed = true;
+    } catch {
+      /* busy: next time */
+    }
+    try {
+      const page = (this.db.prepare("PRAGMA page_size").get() as { page_size: number }).page_size;
+      const pages = (this.db.prepare("PRAGMA page_count").get() as { page_count: number }).page_count;
+      const free = (this.db.prepare("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count;
+      if (free * page > 16 * 1024 * 1024 && free > pages / 4) {
+        this.stmts.clear();
+        this.db.exec("VACUUM");
+        this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        vacuumed = true;
+        freedMb = Math.round((free * page) / 1024 / 1024);
+      }
+    } catch {
+      /* in use: next time */
+    }
+    return { walTrimmed, vacuumed, freedMb };
+  }
 
   close() {
     this.stmts.clear();

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.1.3
+
+- **A lighter bridge.** VBuddy asks MSFS for much less. In cruise the flight data comes every 4th sim frame instead of every frame. The wind and touchdown values are no longer sent separately on every frame, and engine gauges are read about 6 times a second instead of 15.
+- **Very light landings.** Landings used to make the sim stutter, so in the landing window (below 1,000 ft, and on the runway above 40 kt) VBuddy now asks the sim for every second frame instead of every frame. The touchdown rate comes from the sim's own touchdown reading, so it stays exact. Gauge reads pause, and transcribing ATC waits until you've slowed down (90 s at most). The calls aren't lost, just held.
+- **Lite mode** (Settings → Performance on the PC in the app, or the VBuddy window): the least work for the PC while everything still works.
+  - Fewer samples from the sim (every 8th frame in cruise, every 3rd while landing).
+  - The app is updated twice a second.
+  - Gauge reads are lighter and ATC coverage is checked every 6 s.
+  - The speech engine runs on 2 cores.
+- **Only the essentials in the tray.** With no app on screen and the VBuddy window closed or minimised, VBuddy only records the flight, analyses landings, and sends alerts and notifications. Gauge reads stop and the sim is sampled less often. Everything comes back as soon as you look again.
+- **Turn ATC voice to text on or off from your phone** (Comms → Messages, or Settings). Off frees the PC's speech engine completely.
+- **Smaller telemetry.** Each frame's numbers are rounded to what's useful (positions to about 10 cm), so frames are about a third smaller for the phone and the flight log, and quicker to send.
+- **The flight log stays small.** Its write-ahead log is limited to 8 MB (it could grow past 100 MB), and the space freed by old telemetry is given back. A 138 MB log shrinks to about 50 MB the first time.
+- **Voice to text uses less CPU and memory.**
+  - The speech engine only looks at as much audio as each call needs, with at least 15 s for accuracy, instead of 30 s every time.
+  - It makes at most two extra attempts on a hard call instead of five.
+  - It unloads its model when no ATC app has been running for 2 minutes, and loads it again when one starts.
+  - The audio helper is compiled once instead of every time it starts.
+
 ## 2.1.2
 
 - **Voice to text: one message per transmission.** Calls that followed each other closely came out as one message. A transmission now ends as soon as the radio goes quiet after the push-to-talk is released. When the next station answers after a short gap at a clearly different loudness, its call is split off too. The pause before the end of a call is also shorter (0.65 s instead of 0.8 s).

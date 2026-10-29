@@ -75,10 +75,22 @@ export class NetworkService implements NetworkHub {
     });
   }
 
+  private evalMs = EVAL_MS;
   start() {
     this.feed.start();
-    this.timer = setInterval(() => this.evaluate(), EVAL_MS);
+    this.timer = setInterval(() => this.evaluate(), this.evalMs);
     this.timer.unref();
+  }
+  /** Lite mode: who covers you is checked every 6 s instead of 2. */
+  setLite(on: boolean) {
+    const ms = on ? EVAL_MS * 3 : EVAL_MS;
+    if (ms === this.evalMs) return;
+    this.evalMs = ms;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = setInterval(() => this.evaluate(), this.evalMs);
+      this.timer.unref();
+    }
   }
   stop() {
     this.feed.stop();

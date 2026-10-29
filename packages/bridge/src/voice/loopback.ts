@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,9 +12,9 @@ import type { Logger } from "../log.js";
  * output. With "list" it prints the output devices as JSON lines instead. Nothing is recorded to disk here.
  */
 const HELPER = String.raw`
-param([string]$Mode = "capture", [string]$Device = "", [string]$Flow = "render")
+param([string]$Mode = "capture", [string]$Device = "", [string]$Flow = "render", [string]$Dll = "")
 $ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
+$src = @'
 using System;
 using System.IO;
 using System.Threading;
@@ -133,7 +134,7 @@ public static class VbAudio {
     int bp = 0;
     int bytesPer = bits / 8;
     while (true) {
-      Thread.Sleep(10);
+      Thread.Sleep(20);
       uint packet; cap.GetNextPacketSize(out packet);
       while (packet > 0) {
         IntPtr data; uint frames; uint flags; ulong p1; ulong p2;
@@ -313,7 +314,7 @@ public static class VbApps {
     long nextScan = 0;
     string report = null;
     while (true) {
-      Thread.Sleep(10);
+      Thread.Sleep(20);
       if (sw.ElapsedMilliseconds >= nextScan) {
         nextScan = sw.ElapsedMilliseconds + 3000;
         srcs.RemoveAll(x => { bool gone = !Alive(x.Pid); if (gone) { try { x.Client.Stop(); } catch {} } return gone; });
@@ -354,16 +355,30 @@ public static class VbApps {
   }
 }
 '@
+# Compiled once and kept (compiling takes a second or two of CPU each time); a fresh compile if that fails.
+if ($Dll -and (Test-Path -LiteralPath $Dll)) { try { Add-Type -LiteralPath $Dll } catch {} }
+if (-not ('VbApps' -as [type]) -and $Dll) {
+  try { Add-Type -TypeDefinition $src -OutputAssembly $Dll -OutputType Library } catch {}
+  if (-not ('VbApps' -as [type])) { try { Add-Type -LiteralPath $Dll } catch {} }
+}
+if (-not ('VbApps' -as [type])) { Add-Type -TypeDefinition $src }
 if ($Flow -eq 'apps') { [VbApps]::Run($Device) } else { [VbAudio]::Run($Mode, $Device, $Flow) }
 `;
 
+/** This build of the helper, so a new VBuddy never uses an old compiled one. */
+const HELPER_ID = createHash("sha1").update(HELPER).digest("hex").slice(0, 12);
+let written: string | null = null;
 function helperFile(): string {
-  const file = join(tmpdir(), "vbuddy-atc-audio.ps1");
-  writeFileSync(file, "﻿" + HELPER, "utf8");
+  const file = join(tmpdir(), `vbuddy-atc-audio-${HELPER_ID}.ps1`);
+  if (written !== file) {
+    writeFileSync(file, "﻿" + HELPER, "utf8");
+    written = file;
+  }
   return file;
 }
+const helperDll = () => join(tmpdir(), `vbuddy-atc-audio-${HELPER_ID}.dll`);
 
-const ps = (args: string[]) => spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helperFile(), ...args], { windowsHide: true });
+const ps = (args: string[]) => spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helperFile(), ...args, helperDll()], { windowsHide: true });
 
 export interface OutputDevice {
   name: string;

@@ -81,6 +81,10 @@ export interface ServerExtras {
   voiceClip?: ((id: string) => Buffer | null) | null;
   /** Which CDU / MCDU the loaded aircraft has (overrides the panel's own CDU field), and when that changes. */
   cduInfo?: { info(): import("@vbuddy/protocol").PanelState["cdu"] | null; onInfo(cb: () => void): void } | null;
+  /** Lite mode, and whether anyone is looking (the bridge does less when nobody is). */
+  perf?: import("./perf.js").PerfService | null;
+  /** Switches ATC voice to text on or off (from a paired device). */
+  setVoice?: ((on: boolean) => Promise<string | void>) | null;
   /** Airport taxi layouts (VBuddy Ground), and the airport nearest a position. */
   ground?: {
     get(icao: string, refresh?: boolean): Promise<{ chart: unknown; error?: string }>;
@@ -102,8 +106,10 @@ export interface ConsoleHooks {
   act(action: ConsoleAction, body: Record<string, unknown>): string | void | Promise<string | void>;
   /** The latest log lines, for the Activity page. */
   activity(): LogEntry[];
+  /** The window checked in (it does every 2 s): visible is false while it is minimised. */
+  seen?(visible: boolean): void;
 }
-export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice";
+export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice" | "lite";
 
 export interface RelayServerOptions {
   /** Random per run; the relay client sends it so requests through the relay can be told from loopback ones. */
@@ -225,6 +231,12 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     send(c.ws, { t: "pairingInfo", ...pairing.current(), devices: pairing.devicesList() });
   };
 
+  /** App screens open and on screen (an app that never said counts as looking). */
+  const countScreens = () => opts.perf?.setAppScreens([...clients].filter((c) => c.visible !== false && c.ws.readyState === WebSocket.OPEN).length);
+  opts.perf?.onChange((st) => {
+    for (const c of clients) send(c.ws, { t: "perfState", ...st });
+  });
+
   const atcListBody = (): ServerMessageBody =>
     network ? { t: "atcList", status: network.status(), stations: network.stations() } : { t: "atcList", status: { ...NETWORK_OFF }, stations: [] };
   const sendTraffic = (c: Client) => {
@@ -276,7 +288,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     sendPairingInfo(client);
     sendPush(client);
     if (opts.taxi) send(ws, { t: "taxiGuide", guide: opts.taxi.guide() });
+    if (opts.perf) send(ws, { t: "perfState", ...opts.perf.state() });
     clients.add(client);
+    countScreens();
     log.info(
       `${client.name} connected from ${client.addr}${client.relayed ? " (via relay)" : ""}` +
         (replay
@@ -318,9 +332,12 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     }
     if (url === "/api/console" || url.startsWith("/api/console/")) {
       if (!consoleHooks || !isConsoleCaller(req)) return json(res, 404, { error: "not found" });
-      if (url === "/api/console" && req.method === "GET") return json(res, 200, consoleHooks.info());
+      if (url === "/api/console" && req.method === "GET") {
+        consoleHooks.seen?.(req.headers["x-vbuddy-visible"] !== "0");
+        return json(res, 200, consoleHooks.info());
+      }
       if (url === "/api/console/activity" && req.method === "GET") return json(res, 200, consoleHooks.activity());
-      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall|voice)$/.exec(url);
+      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall|voice|lite)$/.exec(url);
       if (m && req.method === "POST" && req.headers["x-vbuddy-console"] === "1") {
         let raw = "";
         for await (const chunk of req) {
@@ -731,6 +748,19 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
         else void opts.taxi.request(msg.cmd).then((r) => send(ws, { t: "taxiResult", id, ...r }));
       } else if (msg.t === "visibility") {
         client.visible = msg.visible;
+        countScreens();
+      } else if (msg.t === "setVoice" || msg.t === "setLite") {
+        const id = msg.id;
+        const reply = (error?: string | void) => send(ws, { t: "settingResult", id, ok: !error, ...(error ? { error } : {}) });
+        if (!trusted(client)) reply("Pair this device first (Systems → Controls).");
+        else if (msg.t === "setVoice") {
+          if (!opts.setVoice) reply("Voice to text isn't available on this bridge.");
+          else void opts.setVoice(msg.enabled).then(reply, (e: Error) => reply(e.message));
+        } else if (!opts.perf) reply("Lite mode isn't available on this bridge.");
+        else {
+          opts.perf.setLite(msg.on);
+          reply();
+        }
       } else if (msg.t === "screenshot") {
         const id = msg.id;
         const shots = opts.screenshots;
@@ -782,6 +812,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       clearTimeout(helloTimer);
       if (client) pending.delete(client);
       if (client && clients.delete(client)) log.info(`${client.name} (${addr}) disconnected - ${clients.size} client(s)`);
+      countScreens();
       if (client?.simView) recountSimView();
     });
     ws.on("error", (e) => log.debug(`socket error from ${addr}: ${e.message}`));
@@ -877,6 +908,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
         c.ws.terminate();
         clients.delete(c);
         pending.delete(c);
+        countScreens();
         continue;
       }
       c.alive = false;

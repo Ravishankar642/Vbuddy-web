@@ -18,6 +18,39 @@ export type ResumeResult =
  * rate, and keeps the recent part of that stream so a client that drops off
  * can ask for exactly what it missed.
  */
+const r = (v: number, places: number) => {
+  const k = 10 ** places;
+  return Math.round(v * k) / k;
+};
+/**
+ * A frame's numbers rounded to what anything can use (lat/lon to about 10 cm, heights to a tenth of a foot): the sim
+ * gives 15 decimal places, which made every frame twice the size on the wire and in the flight log. The landing
+ * analysis reads the sim's own samples, not these.
+ */
+export function compactTelemetry(t: Telemetry): Telemetry {
+  return {
+    ...t,
+    lat: r(t.lat, 6),
+    lon: r(t.lon, 6),
+    altMsl: r(t.altMsl, 1),
+    altAgl: r(t.altAgl, 1),
+    groundElev: r(t.groundElev, 1),
+    pitch: r(t.pitch, 2),
+    bank: r(t.bank, 2),
+    hdgTrue: r(t.hdgTrue, 2),
+    hdgMag: r(t.hdgMag, 2),
+    track: r(t.track, 2),
+    ias: r(t.ias, 2),
+    tas: r(t.tas, 2),
+    gs: r(t.gs, 2),
+    mach: r(t.mach, 3),
+    vs: r(t.vs, 1),
+    gForce: r(t.gForce, 3),
+    simRate: r(t.simRate, 2),
+    ap: { ...t.ap, altSel: r(t.ap.altSel, 0), hdgSel: r(t.ap.hdgSel, 1), spdSel: r(t.ap.spdSel, 1), vsSel: r(t.ap.vsSel, 0) },
+  };
+}
+
 export class TelemetryHub {
   readonly sessionId = randomUUID();
   private latest: { t: Telemetry; at: number } | null = null;
@@ -63,9 +96,21 @@ export class TelemetryHub {
     this.archive = a;
   }
 
+  private rate = 0;
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), 1000 / this.hz);
+    this.timer = setInterval(() => this.tick(), 1000 / (this.rate || this.hz));
+  }
+  /** A different stream rate (Lite mode: 2 a second); null for the configured one. */
+  setRate(hz: number | null) {
+    const next = hz && hz > 0 ? Math.min(hz, this.hz) : 0;
+    if (next === this.rate) return;
+    this.rate = next;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+      this.start();
+    }
   }
 
   stop() {
@@ -111,7 +156,7 @@ export class TelemetryHub {
   tick(now = Date.now()): TelemetryFrame | null {
     const l = this.latest;
     if (!l || now - l.at > STALE_MS) return null;
-    const frame: TelemetryFrame = { seq: this.nextSeq++, ts: l.at, data: l.t };
+    const frame: TelemetryFrame = { seq: this.nextSeq++, ts: l.at, data: compactTelemetry(l.t) };
     this.push(frame);
     for (const cb of this.frameCbs) cb(frame);
     return frame;

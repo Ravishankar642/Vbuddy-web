@@ -71,6 +71,12 @@ export function pickBinUrl(releases: unknown): string | null {
 const MODEL_URL = (file: string) => `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${file}`;
 const PORT = Number(process.env.VBUDDY_WHISPER_PORT) || 8911;
 
+/** The encoder window (50 per second of audio) for a clip this long: a second of margin, at least 768, at most 1500. */
+export function audioCtx(seconds: number): number {
+  const want = Math.ceil(((Math.max(0, seconds) + 1) * 50) / 64) * 64;
+  return Math.min(1500, Math.max(768, want));
+}
+
 export interface EngineStatus {
   state: "missing" | "downloading" | "starting" | "ready" | "error";
   message: string | null;
@@ -307,6 +313,11 @@ export class WhisperEngine implements SpeechEngine {
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "atc.wav");
     form.append("temperature", "0.0");
+    // At most two more tries at a higher temperature when the first is unusable (whisper's default is five).
+    form.append("temperature_inc", "0.4");
+    // whisper pads every clip to 30 s; a radio call is a few seconds. Look at a window that fits it (never under
+    // about 15 s, which keeps the accuracy): the encoder, most of the work, gets two to three times quicker.
+    form.append("audio_ctx", String(audioCtx((wav.length - 44) / 32_000)));
     form.append("response_format", "json");
     if (prompt) form.append("prompt", prompt);
     try {

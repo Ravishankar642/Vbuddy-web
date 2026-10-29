@@ -76,6 +76,31 @@ export class SimSystems implements SystemsSource {
     this.cbs.push(cb);
   }
 
+  /** paused: nobody is looking, or landing (the sim isn't asked for any of it); lite: read less often. */
+  private mode = { paused: false, lite: false };
+  setMode(m: { paused: boolean; lite: boolean }) {
+    if (m.paused === this.mode.paused && m.lite === this.mode.lite) return;
+    this.mode = { ...m };
+    if (this.h) this.requestGroups(this.h);
+  }
+
+  /**
+   * The app shows these twice a second at most: engines every 10th frame, the rest every 30th (6 and 2 a second at
+   * 60 fps), both only when something changed; the slow group once a second. Lite: a third as often. Paused: none.
+   */
+  private requestGroups(h: ConnectionHandle) {
+    const tag = (id: number, what: string) => this.sim.labelSend?.(id, what);
+    const { paused, lite } = this.mode;
+    const frame = paused ? SimConnectPeriod.NEVER : SimConnectPeriod.SIM_FRAME;
+    try {
+      tag(h.requestDataOnSimObject(GROUP_IDS.high, GROUP_IDS.high, SimConnectConstants.OBJECT_ID_USER, frame, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, lite ? 30 : 10, 0), "systems request (engines)");
+      tag(h.requestDataOnSimObject(GROUP_IDS.med, GROUP_IDS.med, SimConnectConstants.OBJECT_ID_USER, frame, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, lite ? 90 : 30, 0), "systems request");
+      tag(h.requestDataOnSimObject(GROUP_IDS.low, GROUP_IDS.low, SimConnectConstants.OBJECT_ID_USER, paused ? SimConnectPeriod.NEVER : SimConnectPeriod.SECOND, 0, 0, lite ? 3 : 1, 0), "systems request (slow)");
+    } catch (e) {
+      this.log?.warn(`Couldn't change the systems reads: ${(e as Error).message}`);
+    }
+  }
+
   private emitNow() {
     this.lastSend = Date.now();
     for (const cb of this.cbs) cb();
@@ -113,12 +138,7 @@ export class SimSystems implements SystemsSource {
     for (const [id, defs] of groups)
       for (const d of defs) this.sim.labelSend?.(h.addToDataDefinition(id, d.name, d.unit || null, TYPES[d.type]), `Systems: ${d.name}`);
 
-    // Same budget as Cobalt: engines every 4th frame, the rest every 12th, both only when something changed;
-    // the slow group once a second regardless.
-    const tag = (id: number, what: string) => this.sim.labelSend?.(id, what);
-    tag(h.requestDataOnSimObject(GROUP_IDS.high, GROUP_IDS.high, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, 4, 0), "systems request (engines)");
-    tag(h.requestDataOnSimObject(GROUP_IDS.med, GROUP_IDS.med, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, 12, 0), "systems request");
-    tag(h.requestDataOnSimObject(GROUP_IDS.low, GROUP_IDS.low, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SECOND, 0, 0, 1, 0), "systems request (slow)");
+    this.requestGroups(h);
 
     h.on("simObjectData", (r) => {
       if (h !== this.h) return;
@@ -157,7 +177,7 @@ export class SimSystems implements SystemsSource {
   }
 
   private maybeOverlay() {
-    if (this.overlayBusy || Date.now() - this.lastOverlay < OVERLAY_MIN_MS) return;
+    if (this.mode.paused || this.overlayBusy || Date.now() - this.lastOverlay < (this.mode.lite ? OVERLAY_MIN_MS * 3 : OVERLAY_MIN_MS)) return;
     const list = profileOverlays(this.profile);
     if (!list.length) return;
     this.lastOverlay = Date.now();

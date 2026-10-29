@@ -11,6 +11,7 @@ import { EfbView } from "./EfbView";
 import { SimView } from "./SimView";
 import { AtlasPage, MyFlights } from "./FlightsPages";
 import { NotifyCard } from "./NotifyCard";
+import { PerformanceCard } from "./PerformanceCard";
 import { ZuluClock } from "./StatusBar";
 import { SYSTEMS_SECTIONS, SystemsView, type SystemsSection } from "./SystemsView";
 
@@ -214,6 +215,7 @@ export function MeTab({ b, openAlerts }: { b: BridgeSnapshot; openAlerts: () => 
         </p>
       </section>
       {!control?.locked && <NotifyCard b={b} open={openAlerts} />}
+      {!control?.locked && <PerformanceCard b={b} />}
       <AppCard />
       <section className="card">
         <h2 className="card__title">Map credits</h2>

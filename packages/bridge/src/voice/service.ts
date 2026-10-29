@@ -30,7 +30,9 @@ const DEFAULTS: VoiceSettings = { enabled: false, source: "apps", apps: ALL_APPS
 /** Recordings kept for playback in the app (memory only). */
 const MAX_CLIPS = 40;
 /** Transmissions waiting for the engine; older ones are dropped rather than falling minutes behind. */
-const MAX_QUEUE = 6;
+const MAX_QUEUE = 10;
+/** No ATC app for this long (and nothing heard): the speech engine is unloaded until one starts. */
+const IDLE_MS = 2 * 60_000;
 
 export interface Transcript {
   /** in: heard from ATC (the output device); out: said by you (the microphone). */
@@ -61,6 +63,17 @@ export class VoiceService {
   private problem: string | null = null;
   private listening = false;
   private cutsInARow = 0;
+  /** The speech engine is unloaded (no ATC app running for a while) until there is something to hear. */
+  private sleeping = false;
+  private waking: Promise<boolean> | null = null;
+  private lastHeard = 0;
+  private idleTimer: NodeJS.Timeout | null = null;
+  /** Transcription waits (landing: nothing heavy while the sim is busiest). */
+  private held = false;
+  private heldSince = 0;
+  private releaseHold: (() => void) | null = null;
+  /** Lite mode: the speech engine on 2 cores whatever the setting. */
+  private liteCpu = false;
 
   constructor(
     private audio: AudioSource,
@@ -76,7 +89,78 @@ export class VoiceService {
   ) {
     this.s = this.load();
     engine.onStatus(() => this.changed());
-    for (const a of [audio, appAudio]) (a as { onDevice?: (cb: () => void) => void } | null)?.onDevice?.(() => this.changed());
+    for (const a of [audio, appAudio])
+      (a as { onDevice?: (cb: () => void) => void } | null)?.onDevice?.(() => {
+        // An ATC app started: load the speech engine again so its first call isn't slow.
+        if (this.sleeping && this.source().current()) void this.wake();
+        this.changed();
+      });
+  }
+
+  private cpu(): CpuUse {
+    return this.liteCpu ? "light" : this.s.cpu;
+  }
+
+  /**
+   * Holds transcription back (the landing): calls are kept and turned into text once released, or after 90 s at most.
+   * The audio is still listened to, which costs next to nothing.
+   */
+  hold(on: boolean) {
+    if (on === this.held) return;
+    this.held = on;
+    this.heldSince = Date.now();
+    if (!on) {
+      this.releaseHold?.();
+      this.releaseHold = null;
+    }
+  }
+  private waitHold(): Promise<void> {
+    if (!this.held) return Promise.resolve();
+    const left = Math.max(0, 90_000 - (Date.now() - this.heldSince));
+    return new Promise((done) => {
+      const t = setTimeout(() => {
+        this.releaseHold = null;
+        done();
+      }, left);
+      t.unref?.();
+      this.releaseHold = () => {
+        clearTimeout(t);
+        done();
+      };
+    });
+  }
+
+  /** Lite mode on or off: the engine restarts on its new core count when it's running. */
+  setLite(on: boolean) {
+    if (on === this.liteCpu) return;
+    this.liteCpu = on;
+    if (this.s.enabled && !this.sleeping) void this.engine.prepare(this.s.model, false, this.cpu()).then(() => this.changed());
+  }
+
+  /** Unloads the engine when listening to the ATC apps and none has run for IDLE_MS (frees its memory). */
+  private checkIdle() {
+    if (this.sleeping || !this.s.enabled || this.s.source !== "apps" || !this.appAudio) return;
+    if (this.source().current() || this.queue.length || this.working) return;
+    if (Date.now() - this.lastHeard < IDLE_MS) return;
+    this.sleeping = true;
+    this.engine.stop();
+    this.log.info("ATC voice: speech engine unloaded until an ATC app starts");
+    this.changed();
+  }
+  private wake(): Promise<boolean> {
+    if (!this.sleeping) return Promise.resolve(true);
+    if (this.waking) return this.waking;
+    this.waking = this.engine.prepare(this.s.model, false, this.cpu()).then((ok) => {
+      this.waking = null;
+      if (ok) {
+        this.sleeping = false;
+        this.lastHeard = Date.now();
+        this.log.info("ATC voice: speech engine loaded again");
+      }
+      this.changed();
+      return ok;
+    });
+    return this.waking;
   }
 
   /** What is listened to now: the ATC apps, or a whole output device. */
@@ -198,8 +282,14 @@ export class VoiceService {
     this.stopAudio();
     this.problem = null;
     this.changed();
-    const ok = await this.engine.prepare(this.s.model, download, this.s.cpu);
+    this.sleeping = false;
+    this.lastHeard = Date.now();
+    const ok = await this.engine.prepare(this.s.model, download, this.cpu());
     if (!ok || !this.s.enabled) return this.changed();
+    if (!this.idleTimer) {
+      this.idleTimer = setInterval(() => this.checkIdle(), 30_000);
+      this.idleTimer.unref?.();
+    }
     this.seg = new Segmenter();
     this.seg.onClip((c) => this.enqueue(c, "in"));
     this.startMic();
@@ -269,6 +359,9 @@ export class VoiceService {
   stop() {
     this.stopAudio();
     this.engine.stop();
+    this.sleeping = false;
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = null;
   }
 
   private enqueue(c: Clip, dir: "in" | "out") {
@@ -293,6 +386,12 @@ export class VoiceService {
     this.working = true;
     try {
       while (this.queue.length) {
+        await this.waitHold();
+        this.lastHeard = Date.now();
+        if (this.sleeping && !(await this.wake())) {
+          this.queue = [];
+          break;
+        }
         const c = this.queue.shift()!;
         const audio = wav(c.samples);
         const text = await this.engine.transcribe(audio, this.prompt());

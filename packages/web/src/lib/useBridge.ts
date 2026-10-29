@@ -42,6 +42,7 @@ export function useBridgeActions() {
     chaseCommand: c.chaseCommand,
     legCommand: c.legCommand,
     taxiCommand: c.taxiCommand,
+    bridgeSetting: c.bridgeSetting,
     dismissTaxiNotice: c.dismissTaxiNotice,
     markRead: c.markRead,
     dismissAttention: c.dismissAttention,

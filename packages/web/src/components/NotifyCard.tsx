@@ -17,7 +17,7 @@ const withCurrent = (opts: number[], cur: number) => (opts.includes(cur) ? opts 
 
 type BoolPref = { [K in keyof PushPrefs]: PushPrefs[K] extends boolean ? K : never }[keyof PushPrefs];
 
-function Toggle({ label, hint, on, disabled, onChange }: { label: string; hint?: string; on: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({ label, hint, on, disabled, onChange }: { label: string; hint?: string; on: boolean; disabled?: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className={`sw${disabled ? " is-off" : ""}`}>
       <span className="sw__text">

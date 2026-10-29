@@ -306,3 +306,22 @@ test("voice to text listens to the ATC apps only by default, or a whole device w
   assert.equal(dev.started, "Headset");
   assert.equal(apps.started, null);
 });
+
+test("during the landing transcription waits, then catches up", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vb-voice-hold-"));
+  const a = new FakeAudio();
+  const e = new FakeEngine();
+  e.st = { state: "ready", message: null, progress: null };
+  const v = new VoiceService(a, e, join(dir, "voice.json"), log, () => "BAW123");
+  await v.configure({ enabled: true, device: "Headset" });
+  const got: string[] = [];
+  v.onTranscript((t) => got.push(t.text));
+  v.hold(true);
+  a.feed!(audio(6, [[1, 3]]), Date.now());
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(got.length, 0);
+  v.hold(false);
+  for (let i = 0; i < 20 && !got.length; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(got.length, 1);
+  v.stop();
+});

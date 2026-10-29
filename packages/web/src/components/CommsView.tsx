@@ -7,6 +7,7 @@ import { useBridgeActions } from "../lib/useBridge";
 import { PairThisDevice } from "./Cockpit";
 import { zulu } from "./StatusBar";
 import { AcarsView } from "./AcarsView";
+import { VoiceSwitch } from "./PerformanceCard";
 import { onBridgePc, setAutoPlay, useAutoPlay, type AutoPlay } from "../lib/atc-audio";
 
 type Run = (cmd: CommsCommand) => Promise<CmdReply>;
@@ -445,6 +446,7 @@ function ListeningCard({ b }: { b: BridgeSnapshot }) {
   return (
     <section className="card">
       <h2 className="card__title">ATC to text</h2>
+      <VoiceSwitch b={b} />
       {v &&
         row(
           "Voice to text",

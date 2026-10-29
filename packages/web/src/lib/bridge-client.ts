@@ -117,6 +117,8 @@ export interface BridgeSnapshot {
   plan: FlightPlanInfo | null;
   /** The taxi route the bridge is following, and where you are on it (null = none). */
   taxi: TaxiGuide | null;
+  /** How hard the bridge works: Lite mode, nobody looking, in the landing window. Null on older bridges. */
+  perf: { lite: boolean; background: boolean; landing: boolean } | null;
   /** The latest taxi note (a turn or crossing coming up, a new route from ATC), until dismissed. */
   taxiNotice: { tag: string; title: string; text: string; receivedAt: number } | null;
   /** The latest flight milestone (takeoff, top of climb…) not yet dismissed. */
@@ -224,6 +226,7 @@ export class BridgeClient {
   private pendingShot = new Map<string, { done: (r: ShotReply) => void; timer: number }>();
   private pendingLeg = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private pendingTaxi = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
+  private pendingSetting = new Map<string, { done: (r: CmdReply) => void; timer: number }>();
   private readAt: Record<string, number> = loadReadAt();
   /** This device's clock minus the PC's (ms), from the last live frame. */
   private clockOffset: number | null = null;
@@ -269,6 +272,7 @@ export class BridgeClient {
     newLanding: null,
     plan: null,
     taxi: null,
+    perf: null,
     taxiNotice: null,
     flightEvent: null,
   };
@@ -428,6 +432,19 @@ export class BridgeClient {
       }, CMD_TIMEOUT_MS);
       this.pendingTaxi.set(id, { done, timer });
       this.send({ t: "taxiCmd", id, cmd });
+    });
+  };
+  /** Bridge settings a paired device may change: ATC voice to text on/off, Lite mode on/off. */
+  bridgeSetting = (what: "voice" | "lite", on: boolean): Promise<CmdReply> => {
+    if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
+    const id = `s${++this.cmdSeq}`;
+    return new Promise((done) => {
+      const timer = window.setTimeout(() => {
+        this.pendingSetting.delete(id);
+        done({ ok: false, error: "No answer from the bridge." });
+      }, CMD_TIMEOUT_MS);
+      this.pendingSetting.set(id, { done, timer });
+      this.send(what === "voice" ? { t: "setVoice", id, enabled: on } : { t: "setLite", id, on });
     });
   };
   dismissTaxiNotice = () => {
@@ -638,6 +655,11 @@ export class BridgeClient {
         p.done({ ok: false, error: "Lost the connection to the bridge." });
       }
       this.pendingLeg.clear();
+      for (const [, p] of this.pendingSetting) {
+        clearTimeout(p.timer);
+        p.done({ ok: false, error: "Lost the connection to the bridge." });
+      }
+      this.pendingSetting.clear();
       for (const [, p] of this.pendingTaxi) {
         clearTimeout(p.timer);
         p.done({ ok: false, error: "Lost the connection to the bridge." });
@@ -822,6 +844,18 @@ export class BridgeClient {
       case "taxiNotice":
         this.update({ taxiNotice: { ...m.notice, receivedAt: Date.now() } });
         break;
+      case "perfState":
+        this.update({ perf: { lite: m.lite, background: m.background, landing: m.landing } });
+        break;
+      case "settingResult": {
+        const p = this.pendingSetting.get(m.id);
+        if (p) {
+          clearTimeout(p.timer);
+          this.pendingSetting.delete(m.id);
+          p.done(m.ok ? { ok: true } : { ok: false, error: m.error ?? "That didn't work." });
+        }
+        break;
+      }
       case "taxiResult": {
         const p = this.pendingTaxi.get(m.id);
         if (p) {

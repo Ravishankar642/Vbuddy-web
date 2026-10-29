@@ -322,7 +322,17 @@ export const TaxiResultSchema = z.object({ ...base, t: z.literal("taxiResult"), 
 /** Why there is or isn't a picture right now. */
 export const SimViewStatusSchema = z.object({ ...base, t: z.literal("simViewStatus"), state: SimViewStateSchema, message: z.string().max(300).optional() });
 
+/**
+ * How hard the bridge is working: lite (the pilot's Lite mode), background (nobody looking: only the essentials run),
+ * landing (in the landing window: nothing heavy runs). Sent after hello and on change.
+ */
+export const PerfStateMsgSchema = z.object({ ...base, t: z.literal("perfState"), lite: z.boolean(), background: z.boolean(), landing: z.boolean() });
+/** The answer to setVoice / setLite. */
+export const SettingResultSchema = z.object({ ...base, t: z.literal("settingResult"), id: z.string().max(40), ok: z.boolean(), error: z.string().max(300).optional() });
+
 export const ServerMessageSchema = z.discriminatedUnion("t", [
+  PerfStateMsgSchema,
+  SettingResultSchema,
   TaxiGuideMsgSchema,
   TaxiNoticeMsgSchema,
   TaxiResultSchema,
@@ -461,7 +471,14 @@ export const VisibilitySchema = z.object({ ...base, t: z.literal("visibility"), 
 /** Start (on) or stop watching the live sim view. */
 export const SimViewSchema = z.object({ ...base, t: z.literal("simView"), on: z.boolean() });
 
+/** Turn ATC voice to text on or off on the bridge (paired devices). */
+export const SetVoiceSchema = z.object({ ...base, t: z.literal("setVoice"), id: z.string().max(40), enabled: z.boolean() });
+/** Lite mode on or off (paired devices). */
+export const SetLiteSchema = z.object({ ...base, t: z.literal("setLite"), id: z.string().max(40), on: z.boolean() });
+
 export const ClientMessageSchema = z.discriminatedUnion("t", [
+  SetVoiceSchema,
+  SetLiteSchema,
   TaxiCmdSchema,
   ScreenshotCmdSchema,
   VisibilitySchema,
