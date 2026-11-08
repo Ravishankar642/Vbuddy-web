@@ -143,7 +143,8 @@ function render(i: Info) {
     $<HTMLButtonElement>("tsServe").hidden = !!ts.url || !ts.running;
     const tst = $("tsStatus");
     tst.className = ts.url ? "status ok" : ts.error ? "status bad" : "status muted";
-    setText(tst, ts.url ? "Ready." : ts.error ?? (ts.installed ? "" : "Tailscale isn't installed."));
+    // Keep an answer from Tailscale on screen until the next button press.
+    if (ts.url || !tst.dataset.note) setText(tst, ts.url ? "Ready." : ts.error ?? (ts.installed ? "" : "Tailscale isn't installed."));
   }
 
   // relay
@@ -398,8 +399,39 @@ $<HTMLButtonElement>("clearHoppie").onclick = async () => {
   if (await act("integrations", { hoppie: "" })) accountsSay("Hoppie code removed.", "muted");
 };
 $("newCode").onclick = () => void act("newCode");
-$("tsServe").onclick = () => void act("tailscale", { serve: true });
-$("tsCheck").onclick = () => void act("tailscale", {});
+// What Tailscale answered (an approval link to open, a setting to turn on), shown under the card.
+function tsSay(text: string) {
+  const st = $("tsStatus");
+  st.className = "status bad";
+  st.dataset.note = "1";
+  st.textContent = "";
+  const link = /https:\/\/login\.tailscale\.com\/\S+/.exec(text)?.[0];
+  if (!link) {
+    st.textContent = text;
+    return;
+  }
+  const [before, after] = text.split(link);
+  const a = document.createElement("a");
+  a.href = link;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = "this Tailscale page";
+  st.append(before ?? "", a, after ?? "");
+}
+$("tsServe").onclick = async () => {
+  const b = $<HTMLButtonElement>("tsServe");
+  b.disabled = true;
+  delete $("tsStatus").dataset.note;
+  setText($("tsStatus"), "Setting up… (this can take a few seconds)");
+  await act("tailscale", { serve: true });
+  b.disabled = false;
+  if (lastNote) tsSay(lastNote);
+};
+$("tsCheck").onclick = async () => {
+  delete $("tsStatus").dataset.note;
+  await act("tailscale", {});
+  if (lastNote) tsSay(lastNote);
+};
 $<HTMLButtonElement>("copyTs").onclick = (e) => info?.tailscale?.url && void copy(info.tailscale.url, e.target as HTMLButtonElement);
 $<HTMLButtonElement>("qrTs").onclick = () => {
   const u = info?.tailscale?.url;

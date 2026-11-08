@@ -807,6 +807,7 @@ async function main() {
     } else if (action === "tailscale") {
       // Check again, or set up `tailscale serve` for VBuddy (only when asked).
       const err = body.serve === true ? await tailscaleServe(cfg.port) : null;
+      if (err) log.warn(`Secure phone link: ${err}`);
       tailscale = await tailscaleState(cfg.port);
       if (tailscale.url) log.info(`Secure phone link: ${tailscale.url}`);
       return err ?? undefined;

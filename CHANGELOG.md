@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.0.1
+
+- **Secure phone link: Set up now tells you what Tailscale needs.** The first time, Tailscale asks you to allow Serve for your tailnet; the card now shows its approval link (before, nothing seemed to happen). It also shows a note when HTTPS certificates are off, and works with Tailscale versions before 1.52.
+
 ## 3.0.0
 
 - **Profile and fuel (Live page).** A new section for flights with a matching SimBrief plan:

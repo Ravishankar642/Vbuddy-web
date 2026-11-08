@@ -21,8 +21,14 @@ const OFF: TailscaleState = { installed: false, running: false, dnsName: null, u
 type Run = (file: string, args: string[]) => Promise<string>;
 const run: Run = (file, args) =>
   new Promise((resolve, reject) =>
-    execFile(file, args, { timeout: 8000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }, (err, out, errOut) => (err ? reject(new Error(String(errOut || err.message).trim().split("\n")[0])) : resolve(out))),
+    // On failure the message carries everything Tailscale printed: it puts the approval link on stdout.
+    execFile(file, args, { timeout: 15000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }, (err, out, errOut) => (err ? reject(new Error(`${String(errOut ?? "")}\n${String(out ?? "")}\n${err.message}`.trim())) : resolve(out))),
   );
+
+/** The link Tailscale prints when Serve has to be allowed for the tailnet first ("To enable, visit: https://login.tailscale.com/f/serve?node=…"). */
+export function approvalLink(text: string): string | null {
+  return /https:\/\/login\.tailscale\.com\/\S+/.exec(text)?.[0].replace(/[.,)]+$/, "") ?? null;
+}
 
 export function tailscaleBin(): string | null {
   if (process.platform === "win32") {
@@ -54,11 +60,27 @@ export async function tailscaleState(port: number, bin = tailscaleBin(), exec: R
 /** Turns on `tailscale serve` for VBuddy's port (it stays on across restarts). */
 export async function tailscaleServe(port: number, bin = tailscaleBin(), exec: Run = run): Promise<string | null> {
   if (!bin) return "Tailscale isn't installed on this PC.";
+  const explain = (m: string): string => {
+    const link = approvalLink(m);
+    if (link) return `Tailscale needs you to allow Serve for your tailnet once. Open ${link} , approve it, then press Set up again.`;
+    if (/not enabled|https certificates|cert/i.test(m)) return "Turn on HTTPS certificates for your tailnet (Tailscale admin console → DNS → HTTPS Certificates, with MagicDNS on), then press Set up again.";
+    const first = m.split("\n").map((l) => l.trim()).find((l) => l && !/^Command failed/i.test(l));
+    return `Tailscale said: ${first ?? m.slice(0, 200)}`;
+  };
   try {
     await exec(bin, ["serve", "--bg", String(port)]);
     return null;
   } catch (e) {
     const m = (e as Error).message;
-    return /https|cert/i.test(m) ? "Turn on HTTPS certificates for your tailnet (Tailscale admin console → DNS → HTTPS Certificates, with MagicDNS on), then try again." : `Tailscale said: ${m}`;
+    // Tailscale before 1.52 has no --bg: the older form.
+    if (/flag provided but not defined|unknown flag/i.test(m) && !approvalLink(m)) {
+      try {
+        await exec(bin, ["serve", "https", "/", `http://127.0.0.1:${port}`]);
+        return null;
+      } catch (e2) {
+        return explain((e2 as Error).message);
+      }
+    }
+    return explain(m);
   }
 }
