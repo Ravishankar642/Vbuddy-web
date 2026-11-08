@@ -10,6 +10,7 @@ import { AcarsCommandSchema, AcarsStateSchema } from "./acars.js";
 import { AtcAlertSchema, AtcPositionSchema, AtcStationSchema, NetPilotSchema, NetworkIdSchema, NetworkStatusSchema } from "./network.js";
 import { SimStatusSchema, TelemetryFrameSchema } from "./telemetry.js";
 import { TaxiGuideSchema, TaxiRequestSchema } from "./ground.js";
+import { FuelPlanSchema, ProfilePointSchema, ProgressSchema } from "./progress.js";
 
 /** Bumped on any breaking change to the wire format. */
 export const PROTOCOL_VERSION = 1;
@@ -227,7 +228,7 @@ export type PushInfoMsg = z.infer<typeof PushInfoSchema>;
 /** A warning about the aircraft itself, shown as a banner in the open app (and pushed to devices that asked for it). */
 export const FlightAlertSchema = z.object({
   id: z.string(),
-  kind: z.enum(["fuel", "engine", "stall", "overspeed", "gear", "sink", "autopilot"]),
+  kind: z.enum(["fuel", "engine", "stall", "overspeed", "gear", "sink", "autopilot", "unstable", "weather"]),
   severity: z.enum(["warning", "caution"]),
   title: z.string(),
   text: z.string(),
@@ -251,7 +252,7 @@ export const ErrorMsgSchema = z.object({
 /** Things that happen during a flight, shown as a note in the open app (and pushed to devices that want them). */
 export const FlightEventSchema = z.object({
   id: z.string(),
-  kind: z.enum(["takeoff", "toc", "tenK", "tod", "approach", "gate", "simLost", "planLoaded", "paused", "flightStart"]),
+  kind: z.enum(["takeoff", "toc", "tenK", "tod", "approach", "gate", "simLost", "planLoaded", "paused", "flightStart", "stable"]),
   title: z.string(),
   text: z.string(),
 });
@@ -283,9 +284,15 @@ export const FlightPlanMsgSchema = z.object({
       /** True when it belongs to the flight being recorded (its departure matches where the flight began). */
       matched: z.boolean(),
       loadedAt: z.number(),
+      /** The planned vertical profile and fuel along the route (bridges before 2.2 leave these out). */
+      profile: z.array(ProfilePointSchema).max(1500).optional(),
+      fuelPlan: FuelPlanSchema.nullable().optional(),
     })
     .nullable(),
 });
+
+/** Flight progress against the plan, every few seconds while flying a matched plan; null when there is none. */
+export const ProgressMsgSchema = z.object({ ...base, t: z.literal("progress"), progress: ProgressSchema.nullable() });
 export type FlightPlanInfo = NonNullable<z.infer<typeof FlightPlanMsgSchema>["plan"]>;
 
 /** A full-size screenshot of the simulator was taken and saved on the PC; fetch it from /api/screenshots/<name>. */
@@ -327,17 +334,25 @@ export const SimViewStatusSchema = z.object({ ...base, t: z.literal("simViewStat
  * landing (in the landing window: nothing heavy runs). Sent after hello and on change.
  */
 export const PerfStateMsgSchema = z.object({ ...base, t: z.literal("perfState"), lite: z.boolean(), background: z.boolean(), landing: z.boolean() });
+/** The shared-flight link: its address and when it ends (null = none), or why it can't be made. Also tells a viewer it is one. */
+export const ShareLinkStateSchema = z.object({ ...base, t: z.literal("shareLinkState"), url: z.string().nullable(), expiresAt: z.number().nullable(), error: z.string().optional(), viewer: z.boolean().optional() });
+/** The app's settings kept on the PC: sent to paired devices on connect and whenever one of them changes them. */
+export const AppSettingsMsgSchema = z.object({ ...base, t: z.literal("appSettings"), updatedAt: z.number(), values: z.record(z.string(), z.string()) });
+
 /** The answer to setVoice / setLite. */
 export const SettingResultSchema = z.object({ ...base, t: z.literal("settingResult"), id: z.string().max(40), ok: z.boolean(), error: z.string().max(300).optional() });
 
 export const ServerMessageSchema = z.discriminatedUnion("t", [
   PerfStateMsgSchema,
+  AppSettingsMsgSchema,
+  ShareLinkStateSchema,
   SettingResultSchema,
   TaxiGuideMsgSchema,
   TaxiNoticeMsgSchema,
   TaxiResultSchema,
   FlightEventMsgSchema,
   FlightPlanMsgSchema,
+  ProgressMsgSchema,
   ScreenshotResultSchema,
   CduMsgSchema,
   CduResultSchema,
@@ -384,6 +399,8 @@ export const HelloSchema = z.object({
   client: z.string().max(64).optional(),
   /** Pairing token from an earlier pairResult; lets this device send commands. */
   token: z.string().max(200).optional(),
+  /** A shared-flight (view only) link's token: lets a friend follow the flight through the relay without pairing. */
+  watch: z.string().max(64).optional(),
   /** Sent on reconnect so the bridge can replay what this client missed. */
   resume: z
     .object({
@@ -475,10 +492,16 @@ export const SimViewSchema = z.object({ ...base, t: z.literal("simView"), on: z.
 export const SetVoiceSchema = z.object({ ...base, t: z.literal("setVoice"), id: z.string().max(40), enabled: z.boolean() });
 /** Lite mode on or off (paired devices). */
 export const SetLiteSchema = z.object({ ...base, t: z.literal("setLite"), id: z.string().max(40), on: z.boolean() });
+/** Make or end the shared-flight link (paired devices only). */
+export const ShareLinkSchema = z.object({ ...base, t: z.literal("shareLink"), action: z.enum(["get", "create", "revoke"]) });
+/** The app's settings, to keep on the PC for the user's other devices (paired devices only). */
+export const SetAppSettingsSchema = z.object({ ...base, t: z.literal("setAppSettings"), updatedAt: z.number(), values: z.record(z.string(), z.string().max(8000)) });
 
 export const ClientMessageSchema = z.discriminatedUnion("t", [
   SetVoiceSchema,
   SetLiteSchema,
+  SetAppSettingsSchema,
+  ShareLinkSchema,
   TaxiCmdSchema,
   ScreenshotCmdSchema,
   VisibilitySchema,

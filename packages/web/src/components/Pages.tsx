@@ -1,4 +1,7 @@
 import { CduView } from "./CduView";
+import { ShareCard } from "./ShareCard";
+import { ScreensCard } from "./ScreensCard";
+import { HealthCard } from "./HealthCard";
 import { useEffect, useState, type ReactNode } from "react";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 import { mapBus } from "../lib/mapbus";
@@ -166,25 +169,6 @@ export function AtlasTab({ b }: { b: BridgeSnapshot }) {
   );
 }
 
-type CommsSeg = "radio" | "traffic";
-/** Comms: radios, messages and ACARS, and the network traffic and ATC around you. */
-export function CommsTab({ b, comms }: { b: BridgeSnapshot; comms: ReactNode }) {
-  const [seg, setSeg] = useState<CommsSeg>(() => (window.location.hash.split("/")[1] === "traffic" ? "traffic" : "radio"));
-  return (
-    <>
-      <Segments<CommsSeg>
-        value={seg}
-        onChange={setSeg}
-        items={[
-          ["radio", "Radio and messages"],
-          ["traffic", "Traffic"],
-        ]}
-      />
-      {seg === "traffic" ? <Traffic b={b} /> : comms}
-    </>
-  );
-}
-
 const THEMES: Array<[ThemePref, string]> = [
   ["system", "Same as device"],
   ["light", "Light"],
@@ -199,6 +183,7 @@ export function MeTab({ b, openAlerts }: { b: BridgeSnapshot; openAlerts: () => 
   return (
     <>
       {control && !control.allowed && control.reason === "not-paired" && <PairThisDevice />}
+      <HealthCard b={b} />
       <section className="card">
         <h2 className="card__title">Appearance</h2>
         <Segments<ThemePref> value={theme.pref} onChange={setThemePref} items={THEMES} />
@@ -214,6 +199,8 @@ export function MeTab({ b, openAlerts }: { b: BridgeSnapshot; openAlerts: () => 
           Zulu time <ZuluClock />
         </p>
       </section>
+      <ScreensCard />
+      <ShareCard b={b} />
       {!control?.locked && <NotifyCard b={b} open={openAlerts} />}
       {!control?.locked && <PerformanceCard b={b} />}
       <AppCard />

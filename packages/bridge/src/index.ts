@@ -12,7 +12,7 @@ import { FlightRecorder } from "./db/recorder.js";
 import { LegBook } from "./db/legs.js";
 import { EfbProxy } from "./efb/proxy.js";
 import { Airports, AtlasService } from "./atlas/atlas.js";
-import { airlineFromSim, formatMhz, sameTransmission, isTaxiClearance, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
+import { airlineFromSim, distNm, formatMhz, type ProfilePoint, sameTransmission, isTaxiClearance, PauseScheduleSchema, summarize, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
 import { LandingStore } from "./landing/store.js";
 import { SectorLoader } from "./network/sector-loader.js";
 import { NetworkService } from "./network/service.js";
@@ -45,7 +45,7 @@ import { PanelService } from "./panel/service.js";
 import { SimPanel } from "./panel/sim-panel.js";
 import { MockPanel } from "./panel/mock-panel.js";
 import { MockSystems, SimSystems } from "./panel/systems-reader.js";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { MockSource } from "./sim/mock-source.js";
 import { SimConnectSource } from "./sim/simconnect-source.js";
 import type { SimSource } from "./sim/source.js";
@@ -59,6 +59,15 @@ import { Updater, windowsLaunch } from "./update/updater.js";
 import { FlightGate } from "./sim/flight-gate.js";
 import { repairFlights, repairPlans } from "./db/repair.js";
 import { PlanTracker, type FlightStart } from "./briefing/plan-tracker.js";
+import { ProgressTracker } from "./briefing/progress.js";
+import { DestinationWeather } from "./briefing/dest-weather.js";
+import { Sigmets } from "./briefing/sigmets.js";
+import { VatsimEvents } from "./network/events.js";
+import { ApproachMonitor } from "./landing/approach.js";
+import { healthItems, redactLog } from "./health.js";
+import { AppSettings } from "./app-settings.js";
+import { WatchLinks } from "./watch-link.js";
+import { tailscaleServe, tailscaleState, type TailscaleState } from "./host/tailscale.js";
 import { FlightEvents, pausedEvent, planLoadedEvent, simLostEvent, todEvent } from "./alerts/flight-events.js";
 import { Screenshots } from "./simview/screenshots.js";
 import { GroundService, MockGround, MsfsGround } from "./ground/service.js";
@@ -69,7 +78,7 @@ import { FenixMcdu } from "./fms/fenix-mcdu.js";
 import { MockMcdu } from "./fms/mock-mcdu.js";
 import { MockVoiceFeed, VoiceService } from "./voice/service.js";
 import { ATC_APPS, isAtcAppKey, NoAudio, WindowsLoopback } from "./voice/loopback.js";
-import { frameSkip, PerfService, type PerfState } from "./perf.js";
+import { AfterLanding, frameSkip, PerfService, readRate, type PerfState } from "./perf.js";
 import { isCpuUse, RECOMMENDED_MODEL, WHISPER_MODELS, WhisperEngine, type WhisperModel } from "./voice/whisper.js";
 import type { OutputDevice } from "./voice/loopback.js";
 import { SayIntentionsLink } from "./atcapps/sayintentions.js";
@@ -154,10 +163,13 @@ async function main() {
   const pruneTimer = recorder ? setInterval(settleAndPrune, 3_600_000) : null;
   pruneTimer?.unref();
 
+  // Saving the landing and the "you landed" notification wait until the roll-out is over: nothing heavy at touchdown.
+  const afterLanding = new AfterLanding(logger("landings"));
   // Landing analysis sees every sim frame, not the 5 Hz client stream.
   const landings = new LandingStore(
     db ? { save: (l) => (recorder ? recorder.saveLanding(l) : void db.insertLanding(l, null)), loadRecent: (n) => db.recentLandingJson(n) } : null,
     logger("landings"),
+    (fn) => afterLanding.run(fn),
   );
   landings.load();
   const analyzer = new LandingAnalyzer(() => ({
@@ -199,7 +211,23 @@ async function main() {
     }
   });
   const lLog = logger("landing");
+  // Stabilised-approach gates at 1,000 and 500 ft: a note in the app when stable, an alert when not, and both in the landing report.
+  const approach = new ApproachMonitor();
+  approach.onGate((g) => {
+    const failed = g.checks.filter((c) => !c.ok);
+    if (g.stable) {
+      const e: FlightEvent = { id: randomUUID(), kind: "stable", title: `Stable at ${g.heightFt} ft`, text: g.checks.map((c) => `${c.label} ${c.value}`).join(" · ") };
+      for (const cb of flightEventCbs) cb(e);
+    } else {
+      const a: FlightAlert = { id: randomUUID(), kind: "unstable", severity: g.heightFt <= 500 ? "warning" : "caution", title: `Unstable at ${g.heightFt} ft`, text: failed.map((c) => `${c.label}: ${c.value}`).join(" · ") + (g.heightFt <= 500 ? ". Consider a go-around." : ".") };
+      log.info(`Alert: ${a.title}. ${a.text}`);
+      for (const cb of flightAlertCbs) cb(a);
+      void push?.notifyAlert(a);
+    }
+  });
   analyzer.onLanding((l) => {
+    const gates = approach.take(Date.now());
+    if (gates.length) l = { ...l, approach: gates };
     const flags = [l.touchAndGo ? "touch-and-go" : "", l.bounces ? `${l.bounces} bounce(s)` : "", l.lowConfidence ? "low confidence" : ""].filter(Boolean);
     lLog.info(
       `Touchdown ${l.vsFpm} fpm (${l.vsSource}), ${l.gPeak.toFixed(2)} g, ${l.rating.toUpperCase()}` + (flags.length ? ` [${flags.join(", ")}]` : ""),
@@ -241,10 +269,12 @@ async function main() {
   // Cockpit control: the Fenix FCU (or a pretend one with the mock flight), only for paired devices and this PC.
   let cockpit: CockpitHub | null = null;
   let fenixCockpit: CockpitService | null = null;
+  let fenixSim: FenixSim | null = null;
   let pairing: Pairing | null = null;
   if (cfg.control) {
     const cLog = logger("cockpit");
     const backend = source instanceof SimConnectSource ? new FenixSim(source, cLog) : new MockCockpit();
+    if (backend instanceof FenixSim) fenixSim = backend;
     fenixCockpit = new CockpitService(backend, cLog);
     cockpit = fenixCockpit;
     // The Fenix keeps its own autopilot: its AP1/AP2 lights count as "autopilot on" in the live data.
@@ -260,7 +290,8 @@ async function main() {
   if (cfg.push && pairing) {
     push = new PushService(cfg.dataDir ? join(cfg.dataDir, "push-subscriptions.json") : null, cfg.dataDir ? join(cfg.dataDir, "push-vapid.json") : null, cfg.pushContact, logger("push"));
     landings.onAdd((l) => {
-      void push!.notifyLanding(summarize(l));
+      const sum = summarize(l);
+      afterLanding.run(() => void push!.notifyLanding(sum));
     });
     network?.onAlert((a) => {
       void push!.notifyAtc(a);
@@ -308,6 +339,7 @@ async function main() {
     if (at - lastFlightAt < 500) return;
     lastFlightAt = at;
     if (!gate.inFlight()) return;
+    approach.update(t, at);
     for (const e of events.update(t, simExtras, at)) fireEvent(e);
     if (push) void push.notifyApproach(events.destMinAway, events.destNm, planTracker?.current()?.arr ?? null);
     if (!todSaid && flight.todMinAway !== null && flight.todNm !== null && flight.todMinAway <= 5 && !t.onGround) {
@@ -316,6 +348,9 @@ async function main() {
     }
     // The aircraft's own autopilot (the Fenix) counts, as it does in the live data.
     const own = !t.ap.master && hub.apOverrideOn();
+    progressTracker.update(t, simExtras.fuelLbs, at);
+    const pl = planTracker.current();
+    destWeather.update(pl?.matched ? pl.arr : null, !t.onGround, at);
     for (const a of flight.update(own ? { ...t, ap: { ...t.ap, master: true } } : t, simExtras, at)) {
       log.info(`Alert: ${a.title}. ${a.text}`);
       for (const cb of flightAlertCbs) cb(a);
@@ -336,7 +371,8 @@ async function main() {
     if (!s.connected) flight.reset();
   });
   // Radios, transponder, VATSIM connection and chat. The radios come from the sim; chat and connect go through the vPilot plugin.
-  const comms = new CommsService(source instanceof SimConnectSource ? new SimRadios(source) : new MockRadios(), logger("comms"), cfg.dataDir ? join(cfg.dataDir, "comms-identity.json") : null);
+  const simRadios = source instanceof SimConnectSource ? new SimRadios(source) : null;
+  const comms = new CommsService(simRadios ?? new MockRadios(), logger("comms"), cfg.dataDir ? join(cfg.dataDir, "comms-identity.json") : null);
   if (push) {
     comms.onChat((m) => {
       if (m.attention && m.dir === "in") void push!.notifyChat(m);
@@ -442,10 +478,15 @@ async function main() {
   });
   const applyPerf = (st: PerfState) => {
     if (source instanceof SimConnectSource) source.setFrameSkip(frameSkip(st));
+    // The Fenix FCU (about 55 L:vars) and the radios: never every frame, and once a second while landing or in the background.
+    fenixSim?.setRate(readRate(st, { normal: 5, lite: 15 }));
+    simRadios?.setRate(readRate(st, { normal: 15, lite: 45 }));
     (systems as { setMode?: (m: { paused: boolean; lite: boolean }) => void }).setMode?.({ paused: st.background || st.landing, lite: st.lite });
     hub.setRate(st.lite ? 2 : null);
     network?.setLite(st.lite);
     voice?.hold(st.landing);
+    recorder?.hold(st.landing);
+    afterLanding.setLanding(st.landing);
     voice?.setLite(st.lite);
   };
   perf.onChange((st) => applyPerf(st));
@@ -502,9 +543,35 @@ async function main() {
         { ident: "TOD", lat: 24.0, lon: 58.6, altFt: 37000, via: null },
         { ident: "OMDB", lat: 25.2528, lon: 55.3644, altFt: 62, via: null },
       ],
+      profile: mockProfile([
+        ["VABB", 19.0887, 72.8679, 39, 9500, "CLB"],
+        ["BUSBO", 19.6, 70.5, 24000, 9000, "CLB"],
+        ["TAPDO", 21.4, 65.9, 37000, 7800, "CRZ"],
+        ["TOD", 24.0, 58.6, 37000, 3000, "CRZ"],
+        ["OMDB", 25.2528, 55.3644, 62, 2200, "DSC"],
+      ]),
+      fuelPlan: { takeoffKg: 9500, landingKg: 2200, reserveKg: 1000, alternateKg: 900, minLandingKg: 1900 },
     }),
   };
   const planTracker = new PlanTracker(cfg.mock ? mockPlan : briefing, logger("plan"), (icao) => airportDb.get(icao));
+  // Flight progress against the plan: vertical profile and fuel, with an alert when you'd land below reserve + alternate.
+  const progressTracker = new ProgressTracker(
+    () => planTracker.current(),
+    (a) => {
+      log.info(`Alert: ${a.title}. ${a.text}`);
+      for (const cb of flightAlertCbs) cb(a);
+      void push?.notifyAlert(a);
+    },
+  );
+  // The destination's weather, every 10 minutes in flight: an alert when it gets worse.
+  const destWeather = new DestinationWeather(
+    (url, init) => fetch(url, init),
+    (a) => {
+      log.info(`Alert: ${a.title}. ${a.text}`);
+      for (const cb of flightAlertCbs) cb(a);
+      void push?.notifyAlert(a);
+    },
+  );
   const flightStart = (): FlightStart | null => gateStart;
   let gateStart: FlightStart | null = null;
   let trackSince: number | null = null;
@@ -631,6 +698,12 @@ async function main() {
     logger("acars"),
   );
 
+  // A secure https link through Tailscale (home-network edition): looked at once now, and when the VBuddy window asks.
+  let tailscale: TailscaleState = { installed: false, running: false, dnsName: null, url: null, error: null };
+  void tailscaleState(cfg.port).then((t) => {
+    tailscale = t;
+    if (t.url) log.info(`Secure phone link (Tailscale): ${t.url}`);
+  });
   const consoleInfo = () => {
     const p = pairing?.current() ?? null;
     return {
@@ -662,7 +735,43 @@ async function main() {
       host: { autostart: autostartState(), plugin: pluginState(), canReconnect: source instanceof SimConnectSource },
       pause: pauser.status(),
       update: updater.state(),
+      tailscale,
     };
+  };
+  // The app's health page and the diagnostics file: what's working, what isn't, and what to do.
+  const healthNow = () => {
+    const pl = planTracker.current();
+    const ps = pluginState();
+    const v = voice?.status() ?? null;
+    return healthItems({
+      version: VERSION,
+      sim: { connected: source.status().connected, aircraft: source.status().aircraftTitle || null },
+      vpilot: { linked: comms.state().net.pluginLinked, installed: ps ? ps.installed : null },
+      voice: v ? { state: v.state, message: v.message, model: v.model } : null,
+      relay: { available: relayAllowed, enabled: relayOn, state: relayClient.state, error: relayOn ? relayClient.lastError : "" },
+      simbrief: { set: integrations.get().simbrief !== "", plan: pl ? { dep: pl.dep, arr: pl.arr, matched: pl.matched } : null, error: null },
+      network: network ? network.status() : null,
+      update: (() => {
+        const u = updater.state();
+        return { kind: u.status.kind, latest: u.version };
+      })(),
+      perf: perf.state(),
+      tailscale,
+    });
+  };
+  const health = {
+    items: healthNow,
+    diagnostics: () => {
+      const info = consoleInfo() as Record<string, unknown>;
+      const { pairing: _p, devices: _d, relay, ...rest } = info;
+      const r = relay as Record<string, unknown>;
+      return {
+        generatedAt: new Date().toISOString(),
+        items: healthNow(),
+        info: { ...rest, relay: { enabled: r.enabled, state: r.state, error: r.error, shared: r.shared, access: r.access } },
+        log: recentLogs().map((e) => `${new Date(e.ts).toISOString()} ${e.level.toUpperCase()} [${e.scope}] ${redactLog(e.msg)}`),
+      };
+    },
   };
   let voiceDevices: OutputDevice[] = [];
   let micDevices: OutputDevice[] = [];
@@ -695,6 +804,12 @@ async function main() {
       return updater.check("manual").then((st) => (st.status.kind === "error" ? st.text : undefined));
     } else if (action === "lite") {
       perf.setLite(body.on === true);
+    } else if (action === "tailscale") {
+      // Check again, or set up `tailscale serve` for VBuddy (only when asked).
+      const err = body.serve === true ? await tailscaleServe(cfg.port) : null;
+      tailscale = await tailscaleState(cfg.port);
+      if (tailscale.url) log.info(`Secure phone link: ${tailscale.url}`);
+      return err ?? undefined;
     } else if (action === "voice") {
       if (!voice) return "Voice to text isn't available in a test flight.";
       if (body.listDevices === true) {
@@ -731,7 +846,7 @@ async function main() {
   };
 
   try {
-    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs, seen: (v) => perf.consoleSeen(v) }, perf, setVoice: async (on) => (voice ? voice.configure({ enabled: on }) : "Voice to text isn't available in a test flight."), briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, taxi: taxiGuide, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
+    server = await startServer({ console: { info: consoleInfo, act: consoleAct, activity: recentLogs, seen: (v) => perf.consoleSeen(v) }, perf, setVoice: async (on) => (voice ? voice.configure({ enabled: on }) : "Voice to text isn't available in a test flight."), briefing, acars, flightAlerts: { onAlert: (cb) => void flightAlertCbs.push(cb) }, panel, cdu, systems, comms, relay: { tag: relayTag, access: cfg.relayAccess, id: identity.id }, push, hub, landings, history: recorder, legs, atlas, efb, efbPort: cfg.efbPort, chasePlane: cfg.mock ? new MockChasePlane() : new ChasePlaneClient(logger("chaseplane")), simView: simViewSource, network, cockpit, pairing, host: cfg.host, port: cfg.port, webDir: cfg.webDir, flightEvents: { onEvent: (cb) => void flightEventCbs.push(cb) }, plan: { current: () => planTracker.current(), onChange: (cb) => planTracker.onChange((p) => cb(p)) }, progress: progressTracker, health, watch: { links: new WatchLinks(cfg.dataDir ? join(cfg.dataDir, "watch-link.json") : null), base: () => (relayOn && relayClient.state === "connected" ? phoneLink(cfg.relayUrl, identity.id) : null) }, appSettings: new AppSettings(cfg.dataDir ? join(cfg.dataDir, "app-settings.json") : null), sigmets: new Sigmets((url, init) => fetch(url, init)), events: cfg.network === "vatsim" ? new VatsimEvents((url, init) => fetch(url, init)) : null, screenshots, weatherTile, weatherInfo: () => ({ clouds: integrations.get().owm !== "" }), ground, taxi: taxiGuide, cduInfo: cdu, voiceClip: (id) => voice?.clip(id) ?? null, logosDir: cfg.dataDir ? join(cfg.dataDir, "logos") : null });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EADDRINUSE") log.error(`Port ${cfg.port} is already in use. Is another bridge running? Use --port to pick another.`);
@@ -787,6 +902,7 @@ async function main() {
     clearInterval(flushTimer);
     if (pruneTimer) clearInterval(pruneTimer);
     await source.stop(); // a landing still open when the sim goes away is finished by the status handler
+    afterLanding.flush();
     recorder?.stop();
     await server!.close();
     db?.close();
@@ -797,3 +913,12 @@ async function main() {
 }
 
 void main();
+
+/** The test flight's pretend vertical profile: distances worked out from the fixes. */
+function mockProfile(pts: Array<[string, number, number, number, number, "CLB" | "CRZ" | "DSC"]>): ProfilePoint[] {
+  let d = 0;
+  return pts.map(([ident, lat, lon, altFt, fuelKg, stage], i) => {
+    if (i > 0) d += distNm(pts[i - 1]![1], pts[i - 1]![2], lat, lon);
+    return { ident, lat, lon, distNm: Math.round(d), altFt, fuelKg, timeMin: null, stage };
+  });
+}

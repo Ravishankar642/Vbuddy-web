@@ -33,6 +33,21 @@ export function inLandingWindow(t: Pick<Telemetry, "onGround" | "altAgl" | "gs">
   return now ? t.altAgl < 1500 : t.altAgl < 1000;
 }
 
+/**
+ * How often a screens-only read (the Fenix FCU's L:vars, the radios) asks the sim. L:vars are the dearest thing to read
+ * over SimConnect, so none of these run every frame: `normal` / `lite` are sim frames skipped between reads, and while
+ * landing or with nobody looking they drop to one read a second.
+ */
+export interface ReadRate {
+  period: "frame" | "second";
+  /** Frames (for "frame") or seconds (for "second") skipped between reads. */
+  skip: number;
+}
+export function readRate(p: PerfState, every: { normal: number; lite: number }): ReadRate {
+  if (p.landing || p.background) return { period: "second", skip: 0 };
+  return { period: "frame", skip: p.lite ? every.lite : every.normal };
+}
+
 export class PerfService {
   private st: PerfState = { lite: false, background: false, landing: false };
   private cbs: Array<(s: PerfState, was: PerfState) => void> = [];
@@ -120,5 +135,55 @@ export class PerfService {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+}
+
+/**
+ * Work that can wait until the landing is over: saving the landing to the flight log and the "you landed" notification.
+ * The touchdown report still reaches the app at once; the disk write and the push (encryption and a web request) run
+ * when the landing window closes, or after `capMs` at the latest.
+ */
+export class AfterLanding {
+  private landing = false;
+  private queue: Array<() => void> = [];
+  private cap: NodeJS.Timeout | null = null;
+
+  constructor(
+    private log: Logger,
+    private capMs = 90_000,
+  ) {}
+
+  /** Runs `fn` now, or when the landing is over. */
+  run(fn: () => void) {
+    if (!this.landing) return this.call(fn);
+    this.queue.push(fn);
+    if (!this.cap) {
+      this.cap = setTimeout(() => this.flush(), this.capMs);
+      this.cap.unref?.();
+    }
+  }
+
+  setLanding(on: boolean) {
+    this.landing = on;
+    if (!on) this.flush();
+  }
+
+  /** Runs everything waiting (also on shutdown). */
+  flush() {
+    if (this.cap) clearTimeout(this.cap);
+    this.cap = null;
+    for (const fn of this.queue.splice(0)) this.call(fn);
+  }
+
+  get waiting() {
+    return this.queue.length;
+  }
+
+  private call(fn: () => void) {
+    try {
+      fn();
+    } catch (e) {
+      this.log.warn(`After-landing task failed: ${(e as Error).message}`);
+    }
   }
 }

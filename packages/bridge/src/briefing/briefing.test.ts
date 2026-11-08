@@ -77,6 +77,11 @@ test("simbrief: maps the plan, converts pounds, tolerates one alternate object o
   assert.deepEqual(m.airports.map((a) => [a.role, a.icao, a.plannedRunway]), [["origin", "OMDB", "30R"], ["destination", "OTHH", "16R"], ["alternate", "OBBI", "30L"]]);
   assert.equal(m.fixes.length, 2);
   assert.equal(m.fixes[1]!.ident, "PEXEM");
+  // The vertical profile: the departure first, then each navlog fix.
+  assert.deepEqual(m.profile.map((p) => p.ident), ["OMDB", "PEXEM"]); // no departure point: the fixture origin has no position
+  assert.equal(m.profile[1]!.altFt, 10000);
+  assert.equal(m.profile[0]!.distNm, 0);
+  assert.equal(m.fuelPlan.minLandingKg, m.fuelPlan.reserveKg === null ? null : m.fuelPlan.reserveKg + (m.fuelPlan.alternateKg ?? 0));
   const bare = mapOfp({ ...OFP, alternate: [] })!;
   assert.equal(bare.airports.length, 2);
   assert.equal(mapOfp({ fetch: { status: "Error" } }), null);

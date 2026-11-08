@@ -26,6 +26,11 @@ namespace VBuddyLink
         private volatile bool _up;
         private string _lastError = "";
         private volatile bool _acked;
+        // The bridge (2.1.5+) sends {"t":"ping"} every 10 s. Once one has arrived, 30 s of silence means the connection is dead
+        // even if Windows still calls it open (a half-open socket never ends ReceiveAsync), so it is dropped and made again.
+        private const int SilenceMs = 30000;
+        private long _lastRxTicks;
+        private volatile bool _sawPing;
         private readonly object _chainLock = new object();
         private Task _tail = Task.FromResult(0);
 
@@ -88,6 +93,8 @@ namespace VBuddyLink
                 ws.Options.Proxy = null;
                 _ws = ws;
                 _acked = false;
+                _sawPing = false;
+                Interlocked.Exchange(ref _lastRxTicks, DateTime.UtcNow.Ticks);
                 try
                 {
                     // Never wait forever on a connect that stalls: give up after 10 s and try again.
@@ -99,11 +106,16 @@ namespace VBuddyLink
                     _log("Connected the socket to " + _settings.Host + ":" + _settings.Port + "; saying hello.");
                     _up = true;
                     delay = 1000;
-                    Send(new Dictionary<string, object> { { "t", "hello" }, { "protocol", ProtocolVersion }, { "plugin", "VBuddyLink 1.0.0" } });
+                    Send(new Dictionary<string, object> { { "t", "hello" }, { "protocol", ProtocolVersion }, { "plugin", "VBuddyLink 1.0.1" } });
                     _onConnected();
                     // The bridge answers hello with "welcome"; if it doesn't within 5 s this connection is not usable, so start over.
                     var watchdog = Task.Delay(5000, ct).ContinueWith(t => { if (!t.IsCanceled && !_acked) { try { ws.Abort(); } catch { } } });
-                    await Receive(ws, ct).ConfigureAwait(false);
+                    using (var alive = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    {
+                        var silence = Task.Run(() => WatchSilence(ws, alive.Token));
+                        try { await Receive(ws, ct).ConfigureAwait(false); }
+                        finally { alive.Cancel(); }
+                    }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                 catch (Exception ex)
@@ -123,6 +135,26 @@ namespace VBuddyLink
             }
         }
 
+        /// <summary>Drops a connection the bridge has gone quiet on (only once it has shown it sends pings).</summary>
+        private async Task WatchSilence(ClientWebSocket ws, CancellationToken ct)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    await Task.Delay(5000, ct).ConfigureAwait(false);
+                    var quietMs = (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastRxTicks)) / TimeSpan.TicksPerMillisecond;
+                    if (_sawPing && quietMs > SilenceMs)
+                    {
+                        _log("No word from the VBuddy bridge for " + (quietMs / 1000) + " s; reconnecting.");
+                        try { ws.Abort(); } catch { }
+                        return;
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        }
+
         private async Task Receive(ClientWebSocket ws, CancellationToken ct)
         {
             var buf = new byte[16 * 1024];
@@ -138,12 +170,18 @@ namespace VBuddyLink
                     sb.Append(Encoding.UTF8.GetString(buf, 0, r.Count));
                     if (sb.Length > 256 * 1024) return;
                 } while (!r.EndOfMessage);
+                Interlocked.Exchange(ref _lastRxTicks, DateTime.UtcNow.Ticks);
 
                 try
                 {
                     var cmd = _json.DeserializeObject(sb.ToString()) as Dictionary<string, object>;
                     if (cmd == null) continue;
                     object t0;
+                    if (cmd.TryGetValue("t", out t0) && "ping".Equals(t0))
+                    {
+                        _sawPing = true;
+                        continue;
+                    }
                     if (cmd.TryGetValue("t", out t0) && "welcome".Equals(t0))
                     {
                         _acked = true;

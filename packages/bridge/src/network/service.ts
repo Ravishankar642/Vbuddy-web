@@ -36,6 +36,8 @@ export interface NetworkHub {
   onUpdate(cb: () => void): void;
   onPosition(cb: (p: AtcPosition) => void): void;
   onAlert(cb: (a: AtcAlert) => void): void;
+  /** The ATIS online for an airport, if any. */
+  atis?(icao: string): { callsign: string; freq: string; code: string | null; text: string[] } | null;
 }
 
 /**
@@ -157,6 +159,12 @@ export class NetworkService implements NetworkHub {
   ownReg(): string | null {
     const me = this.you ? this.snap?.pilots.find((p) => p.callsign === this.you) : undefined;
     return me?.reg ?? null;
+  }
+
+  atis(icao: string) {
+    const want = icao.toUpperCase();
+    const a = this.snap?.atis.find((x) => x.callsign.toUpperCase().startsWith(`${want}_`) && x.callsign.toUpperCase().includes("ATIS"));
+    return a ? { callsign: a.callsign, freq: a.freq, code: a.code, text: a.text } : null;
   }
 
   position() {

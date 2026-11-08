@@ -6,6 +6,7 @@ import { int } from "../lib/format";
 import { mapBus } from "../lib/mapbus";
 import { useBridgeActions } from "../lib/useBridge";
 import { LandingView } from "./LandingView";
+import { LandingTrend, LogbookStats } from "./LogbookStats";
 
 const day = (ms: number) => new Date(ms).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" });
 const dayTime = (ms: number) => new Date(ms).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -274,25 +275,20 @@ export function AtlasPage({ b }: { b: BridgeSnapshot }) {
   const stats: Array<[string, string]> = [
     ["Flights", a ? String(a.flights) : "–"],
     ["Hours", a ? hours(a.flightMs) : "–"],
-    ["Distance nm", a ? int(a.distanceNm) : "–"],
     ["Airports", a ? String(a.airports.length) : "–"],
-    ["Countries", a ? String(a.countries.length) : "–"],
     ["Landings", String(b.landings.length)],
   ];
   return (
     <>
-      <section className="ms__atlas">
-        <small>VBuddy Logbook</small>
-        <h2>Flight record</h2>
-      </section>
-      <dl className="ms__stats ms__stats--6">
+      <section className="lb__totals" aria-label="Totals">
         {stats.map(([k, v]) => (
           <div key={k}>
-            <dd>{v}</dd>
-            <dt>{k}</dt>
+            <b>{v}</b>
+            <small>{k}</small>
           </div>
         ))}
-      </dl>
+      </section>
+      <LandingTrend b={b} />
       <p className="muted fl__none">Only flights flown on the route of your SimBrief plan are logged here. Fill in your plan before you fly.</p>
       {a && a.flights === 0 && <p className="muted fl__none">No logged flights yet.</p>}
       {atlas === "off" && <p className="muted fl__none">Your flight log is switched off, so there are no totals yet.</p>}
@@ -327,6 +323,7 @@ export function AtlasPage({ b }: { b: BridgeSnapshot }) {
         </section>
       )}
       <LandingView b={b} />
+      <LogbookStats b={b} />
     </>
   );
 }

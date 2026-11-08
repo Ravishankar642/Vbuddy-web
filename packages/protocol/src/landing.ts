@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ApproachGateSchema } from "./approach.js";
 
 /**
  * Landing debrief records.
@@ -26,6 +27,11 @@ export const FlareSampleSchema = z.object({
   ias: z.number(),
   g: z.number(),
   onGround: z.boolean(),
+  /** Position, bank and true heading, for the replay (bridge 2.2+). */
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  bank: z.number().optional(),
+  hdg: z.number().optional(),
 });
 export type FlareSample = z.infer<typeof FlareSampleSchema>;
 
@@ -73,6 +79,9 @@ export const LandingSummarySchema = z.object({
       crosswindKt: z.number(),
     })
     .nullable(),
+
+  /** The stabilised-approach gates on the way down (1,000 and 500 ft), when they were passed (bridge 2.2+). */
+  approach: z.array(ApproachGateSchema).optional(),
 
   flare: z.object({
     /** Descent rate when passing these heights on the way down; null if not seen. */

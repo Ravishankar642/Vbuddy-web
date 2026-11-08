@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { formatMhz, isTaxiClearance, parseMhz, UNICOM_HZ, type AtcAppStatus, type ChatMessage, type CommsCommand, type VoiceStatus } from "@vbuddy/protocol";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { formatMhz, isTaxiClearance, parseClearance, parseMhz, readback, UNICOM_HZ, type AtcAppStatus, type ChatMessage, type CommsCommand, type VoiceStatus } from "@vbuddy/protocol";
 import { apiFetch } from "../lib/api";
 import type { BridgeSnapshot, CmdReply } from "../lib/bridge-client";
 import { chimeEnabled, playChime, setChimeEnabled } from "../lib/chime";
@@ -343,6 +343,7 @@ function Console({ b, run, enabled }: { b: BridgeSnapshot; run: Run; enabled: bo
                     <span>{zulu(m.ts, false)}</span>
                   </div>
                   <div className="msg__text">{m.text}</div>
+                  {m.dir === "in" && m.kind !== "system" && <ClearanceChips text={m.text} enabled={enabled} run={run} />}
                   {(m.clip || (m.dir === "in" && isTaxiClearance(m.text))) && (
                     <div className="msg__acts">
                       {m.clip && <ClipButton id={m.clip} />}
@@ -465,13 +466,14 @@ function ListeningCard({ b }: { b: BridgeSnapshot }) {
 
 /* ------------------------------------------------------------------ tab */
 
-type CommsMode = "radio" | "messages" | "acars";
+type CommsMode = "radio" | "messages" | "acars" | "traffic";
 const modeFromHash = (): CommsMode => {
   const seg = window.location.hash.slice(1).split("/")[1];
-  return seg === "messages" || seg === "acars" ? seg : "radio";
+  return seg === "messages" || seg === "acars" || seg === "traffic" ? seg : "radio";
 };
 
-export function CommsView({ b }: { b: BridgeSnapshot }) {
+/** Comms: one row of tabs (radio, messages, ACARS, traffic). */
+export function CommsView({ b, traffic }: { b: BridgeSnapshot; traffic?: ReactNode }) {
   const { commsCommand } = useBridgeActions();
   const [chime, setChime] = useState(chimeEnabled);
   const [chimeNote, setChimeNote] = useState<string | null>(null);
@@ -495,7 +497,7 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
   return (
     <div className="comms">
       {control && !control.allowed && control.reason === "not-paired" && <PairThisDevice />}
-      <div className="seg comms__mode" role="group" aria-label="Radio, messages or ACARS">
+      <div className="seg comms__mode" role="group" aria-label="Radio, messages, ACARS or traffic">
         <button type="button" aria-pressed={mode === "radio"} onClick={() => setMode("radio")}>
           Radio
         </button>
@@ -505,8 +507,13 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
         <button type="button" aria-pressed={mode === "acars"} onClick={() => setMode("acars")}>
           ACARS{unreadAcars > 0 ? ` (${unreadAcars})` : ""}
         </button>
+        <button type="button" aria-pressed={mode === "traffic"} onClick={() => setMode("traffic")}>
+          Traffic
+        </button>
       </div>
-      {mode === "acars" ? (
+      {mode === "traffic" ? (
+        traffic ?? null
+      ) : mode === "acars" ? (
         <section className="card">
           <h2 className="card__title">ACARS (Hoppie)</h2>
           <AcarsView b={b} enabled={enabled} />
@@ -572,6 +579,7 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
         </>
       ) : (
       <>
+      <LatestForYou b={b} enabled={enabled} run={commsCommand} />
       <section className="card">
         <h2 className="card__title">Avionics</h2>
         {!c?.radios ? (
@@ -602,3 +610,91 @@ export function CommsView({ b }: { b: BridgeSnapshot }) {
     </div>
   );
 }
+
+/**
+ * The instructions in an ATC message as chips: a frequency tunes COM1 and a squawk sets the transponder in one tap;
+ * the rest (levels, headings, speeds, QNH, directs) are there to read back from.
+ */
+function ClearanceChips({ text, enabled, run }: { text: string; enabled: boolean; run: Run }) {
+  const items = useMemo(() => parseClearance(text), [text]);
+  const [done, setDone] = useState<string | null>(null);
+  if (!items.length) return null;
+  const act = async (label: string, c: CommsCommand) => {
+    const r = await run(c);
+    setDone(r.ok ? label : `Couldn't: ${r.error}`);
+  };
+  return (
+    <div className="clr">
+      {items.map((i) =>
+        i.kind === "frequency" && i.hz ? (
+          <button key={i.label} type="button" className="clr__chip is-act" disabled={!enabled} onClick={() => void act(`COM1 set to ${i.label}`, { op: "com", radio: 1, action: "active", hz: i.hz! })}>
+            Tune {i.label}
+          </button>
+        ) : i.kind === "squawk" && i.code ? (
+          <button key={i.label} type="button" className="clr__chip is-act" disabled={!enabled} onClick={() => void act(`Squawking ${i.code}`, { op: "xpdr", action: "code", code: i.code! })}>
+            {i.label}
+          </button>
+        ) : (
+          <span key={i.label} className="clr__chip">
+            {i.label}
+          </span>
+        ),
+      )}
+      {done && <small className="clr__done">{done}</small>}
+    </div>
+  );
+}
+
+/**
+ * The last thing ATC said to you (in the last 15 minutes), with its instructions as chips and the readback written out
+ * for you to say. On VATSIM you read back by voice, so this is a prompt, not a message that gets sent.
+ */
+function LatestForYou({ b, enabled, run }: { b: BridgeSnapshot; enabled: boolean; run: Run }) {
+  const m = useMemo(() => [...b.chat].reverse().find((x) => x.dir === "in" && x.attention && x.kind !== "system"), [b.chat]);
+  const callsign = b.comms?.net?.callsign ?? null;
+  const items = useMemo(() => (m ? parseClearance(m.text) : []), [m]);
+  const [copied, setCopied] = useState(false);
+  if (!m || Date.now() - m.ts > 15 * 60_000) return null;
+  const rb = readback(items, callsign);
+  return (
+    <section className="card latest" aria-label="Latest for you">
+      <h2 className="card__title">Latest for you</h2>
+      <article className="latest__msg">
+        <div className="msg__meta">
+          <b>{m.from}</b>
+          <span>
+            {zulu(m.ts, false)}
+            {m.source && m.source !== "vatsim" ? ` · ${SOURCE_LABEL[m.source]}` : ""}
+          </span>
+        </div>
+        <p className="latest__text">{m.text}</p>
+        <ClearanceChips text={m.text} enabled={enabled} run={run} />
+        {rb && (
+          <div className="latest__rb">
+            <span>
+              Readback: <q>{rb}</q>
+            </span>
+            <button
+              type="button"
+              className="btn"
+              onClick={() =>
+                void navigator.clipboard?.writeText(rb).then(
+                  () => setCopied(true),
+                  () => {},
+                )
+              }
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        )}
+        {m.clip && (
+          <div className="msg__acts">
+            <ClipButton id={m.clip} />
+          </div>
+        )}
+      </article>
+    </section>
+  );
+}
+

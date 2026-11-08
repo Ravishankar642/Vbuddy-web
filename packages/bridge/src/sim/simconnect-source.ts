@@ -87,6 +87,7 @@ const VARS = [
   ["AUTOPILOT HEADING LOCK DIR", "degrees"],
   ["AUTOPILOT AIRSPEED HOLD VAR", "knots"],
   ["AUTOPILOT VERTICAL HOLD VAR", "feet per minute"],
+  ["INDICATED ALTITUDE", "feet"], // the altimeter (PLANE ALTITUDE is true altitude: off by 1,000+ ft in non-standard air)
 ] as const;
 
 function decode(b: RawBuffer): Telemetry {
@@ -97,6 +98,7 @@ function decode(b: RawBuffer): Telemetry {
     lat: at(0),
     lon: at(1),
     altMsl: at(2),
+    altInd: at(27),
     altAgl: at(3),
     groundElev: at(4),
     // MSFS reports pitch as + nose DOWN and bank as + LEFT; flip to the usual convention.

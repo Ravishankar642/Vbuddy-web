@@ -9,7 +9,10 @@ export const TelemetrySchema = z.object({
   // Position
   lat: z.number(), // degrees, +N
   lon: z.number(), // degrees, +E
-  altMsl: z.number(), // feet
+  altMsl: z.number(), // feet, true altitude (geometric, above sea level)
+  // feet, what the aircraft's altimeter shows (the baro setting applied). Off true altitude by over 1,000 ft in cruise when
+  // the air is warmer or colder than standard, so this is what the app shows; older bridges don't send it.
+  altInd: z.number().optional(),
   altAgl: z.number(), // feet (radio height style, above ground under the aircraft)
   groundElev: z.number(), // feet MSL of the ground under the aircraft
 
@@ -104,3 +107,8 @@ export const SimStatusSchema = z.object({
     .optional(),
 });
 export type SimStatus = z.infer<typeof SimStatusSchema>;
+
+/** The altitude to show the pilot: the altimeter's reading when the bridge sends it, true altitude otherwise. */
+export function indicatedAlt(t: { altMsl: number; altInd?: number }): number {
+  return t.altInd ?? t.altMsl;
+}

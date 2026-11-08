@@ -40,7 +40,9 @@ import {
   type ServerMessage,
   type SimStatus,
   type TelemetryFrame,
+  type Progress,
 } from "@vbuddy/protocol";
+import { receiveAppSettings } from "./settings-sync";
 
 export type LinkState = "connecting" | "open" | "waiting";
 
@@ -115,6 +117,10 @@ export interface BridgeSnapshot {
   newLanding: LandingSummary | null;
   /** The SimBrief plan for the flight in progress (or the latest one). Null = none. */
   plan: FlightPlanInfo | null;
+  /** The shared-flight link (made on a paired device), or, on a friend's screen, that this is a view-only follow. */
+  share: { url: string | null; expiresAt: number | null; error: string | null; viewer: boolean } | null;
+  /** Where you are against the plan's vertical profile and fuel (null = no matched plan, or an older bridge). */
+  progress: Progress | null;
   /** The taxi route the bridge is following, and where you are on it (null = none). */
   taxi: TaxiGuide | null;
   /** How hard the bridge works: Lite mode, nobody looking, in the landing window. Null on older bridges. */
@@ -144,6 +150,17 @@ const CMD_TIMEOUT_MS = 30_000;
 
 export type CmdReply = { ok: true } | { ok: false; error: string };
 export type ChaseReply = { ok: true; views?: ChaseViewInfo[]; airport?: string | null } | { ok: false; error: string };
+
+/** A shared-flight link's token ("…?r=abc&w=TOKEN"): this page follows someone's flight, view only. Kept for the tab. */
+export function readWatchToken(): string | undefined {
+  try {
+    const w = new URLSearchParams(window.location.search).get("w");
+    if (w && /^[A-Za-z0-9_-]{8,64}$/.test(w)) sessionStorage.setItem("vbuddy.watch", w);
+    return sessionStorage.getItem("vbuddy.watch") ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function readPairToken(): string | undefined {
   try {
@@ -271,6 +288,8 @@ export class BridgeClient {
     details: {},
     newLanding: null,
     plan: null,
+    progress: null,
+    share: null,
     taxi: null,
     perf: null,
     taxiNotice: null,
@@ -435,6 +454,20 @@ export class BridgeClient {
     });
   };
   /** Bridge settings a paired device may change: ATC voice to text on/off, Lite mode on/off. */
+  /** Make, read or end the shared-flight link; the answer arrives as `share`. */
+  shareLink = (action: "get" | "create" | "revoke") => {
+    this.send({ t: "shareLink", action });
+  };
+
+  /** Set once the bridge has sent its copy of the app settings this connection (it only does for paired devices). */
+  private appSettingsOk = false;
+  /** Sends this device's app settings to keep on the PC; false when this device can't (not paired, not connected). */
+  pushAppSettings = (updatedAt: number, values: Record<string, string>): boolean => {
+    if (!this.appSettingsOk || this.snap.link !== "open") return false;
+    this.send({ t: "setAppSettings", updatedAt, values });
+    return true;
+  };
+
   bridgeSetting = (what: "voice" | "lite", on: boolean): Promise<CmdReply> => {
     if (this.ws?.readyState !== WebSocket.OPEN) return Promise.resolve({ ok: false, error: "Not connected to the bridge." });
     const id = `s${++this.cmdSeq}`;
@@ -591,10 +624,12 @@ export class BridgeClient {
 
     ws.onopen = () => {
       this.lastMsgAt = Date.now();
+      this.appSettingsOk = false;
       this.send({
         t: "hello",
         client: this.clientName,
         ...(readPairToken() ? { token: readPairToken() } : {}),
+        ...(readWatchToken() ? { watch: readWatchToken() } : {}),
         ...(this.sessionId ? { resume: { sessionId: this.sessionId, lastSeq: this.lastSeq } } : {}),
       });
       this.pingTimer = window.setInterval(() => {
@@ -798,6 +833,9 @@ export class BridgeClient {
       case "flightPlan":
         this.update({ plan: m.plan });
         break;
+      case "progress":
+        this.update({ progress: m.progress });
+        break;
       case "screenshotResult": {
         const p = this.pendingShot.get(m.id);
         if (p) {
@@ -843,6 +881,13 @@ export class BridgeClient {
         break;
       case "taxiNotice":
         this.update({ taxiNotice: { ...m.notice, receivedAt: Date.now() } });
+        break;
+      case "shareLinkState":
+        this.update({ share: { url: m.url, expiresAt: m.expiresAt, error: m.error ?? null, viewer: !!m.viewer } });
+        break;
+      case "appSettings":
+        this.appSettingsOk = true;
+        receiveAppSettings(m.updatedAt, m.values);
         break;
       case "perfState":
         this.update({ perf: { lite: m.lite, background: m.background, landing: m.landing } });

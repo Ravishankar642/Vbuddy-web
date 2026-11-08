@@ -1,4 +1,4 @@
-import type { FlightAlert, Telemetry } from "@vbuddy/protocol";
+import { indicatedAlt, type FlightAlert, type Telemetry } from "@vbuddy/protocol";
 import { randomUUID } from "node:crypto";
 import type { SimExtras } from "../sim/source.js";
 import { distNm } from "../network/geo.js";
@@ -150,7 +150,7 @@ export class FlightAlerts {
       else if (this.held("apOff", true, AP_OFF_MS, now)) {
         this.since.delete("apOn");
         this.since.delete("apOff");
-        if (t.altAgl > AP_CRUISE_AGL) this.fire("autopilot", now, { kind: "autopilot", severity: "caution", title: "Autopilot off", text: `The autopilot switched off at ${fmt(t.altMsl)} ft.` }, out);
+        if (t.altAgl > AP_CRUISE_AGL) this.fire("autopilot", now, { kind: "autopilot", severity: "caution", title: "Autopilot off", text: `The autopilot switched off at ${fmt(indicatedAlt(t))} ft.` }, out);
       }
     }
 

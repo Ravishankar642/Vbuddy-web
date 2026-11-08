@@ -43,6 +43,8 @@ export function useBridgeActions() {
     legCommand: c.legCommand,
     taxiCommand: c.taxiCommand,
     bridgeSetting: c.bridgeSetting,
+    pushAppSettings: c.pushAppSettings,
+    shareLink: c.shareLink,
     dismissTaxiNotice: c.dismissTaxiNotice,
     markRead: c.markRead,
     dismissAttention: c.dismissAttention,

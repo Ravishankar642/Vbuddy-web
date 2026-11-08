@@ -3,6 +3,7 @@ import { DataRequestFlag, RawBuffer, SimConnectConstants, SimConnectDataType, Si
 import type { Logger } from "../log.js";
 import type { CockpitBackend, ControlPath } from "./backend.js";
 import { emptyValues, isFenix, READ_VARS, type FenixValues, type FenixVar } from "./fenix-vars.js";
+import type { ReadRate } from "../perf.js";
 
 // IDs well away from the telemetry ones (1-5).
 const DEF_FCU = 40;
@@ -44,6 +45,8 @@ export class FenixSim implements CockpitBackend {
   /** Last value written per variable, so quick successive adds build on each other. */
   private written = new Map<FenixVar, { value: number; at: number }>();
   private isPaused = false;
+  /** How often the FCU is read: not every sim frame (about 55 L:vars each time), and once a second while landing or in the background. */
+  private rate: ReadRate = { period: "frame", skip: 5 };
 
   constructor(
     private sim: SimLike,
@@ -85,13 +88,25 @@ export class FenixSim implements CockpitBackend {
         for (const n of READ_VARS) h.addToDataDefinition(DEF_FCU, `L:${n}`, "number", SimConnectDataType.FLOAT64);
         this.defsReady = true;
       }
-      h.requestDataOnSimObject(REQ_FCU, DEF_FCU, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED);
+      this.request(h);
       this.log.info(`Fenix A320 detected (${s.aircraftTitle}): cockpit control available.`);
       this.resetPath();
     } else {
       h.requestDataOnSimObject(REQ_FCU, DEF_FCU, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.NEVER);
       this.setValues(null);
     }
+  }
+
+  private request(h: ConnectionHandle) {
+    const r = this.rate;
+    h.requestDataOnSimObject(REQ_FCU, DEF_FCU, SimConnectConstants.OBJECT_ID_USER, r.period === "frame" ? SimConnectPeriod.SIM_FRAME : SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, r.skip, 0);
+  }
+
+  /** The bridge's performance state changed: read the FCU less often (the same request id replaces the old request). */
+  setRate(r: ReadRate) {
+    if (r.period === this.rate.period && r.skip === this.rate.skip) return;
+    this.rate = r;
+    if (this.h && this.active) this.request(this.h);
   }
 
   private setValues(v: FenixValues | null) {

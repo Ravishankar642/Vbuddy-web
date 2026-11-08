@@ -43,6 +43,8 @@ export function planInfo(m: Mapped, start: FlightStart | null, now: number, airp
     fixes: line.slice(0, 2000),
     matched: start ? matches(start, depPos, line) : false,
     loadedAt: now,
+    profile: m.profile,
+    fuelPlan: m.fuelPlan,
   };
 }
 

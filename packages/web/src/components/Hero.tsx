@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import type { Telemetry } from "@vbuddy/protocol";
+import { indicatedAlt, type Telemetry } from "@vbuddy/protocol";
 import { fixed, hdg, int, signed } from "../lib/format";
 
 /** A heading dial: the ring turns so your heading is always at the top. */
@@ -45,7 +45,7 @@ export function FlightHero({ t, aircraft }: { t: Telemetry; aircraft: string }) 
       <div className="fhero__alt">
         <small>Altitude</small>
         <b>
-          {int(t.altMsl)}
+          {int(indicatedAlt(t))}
           <i>ft</i>
         </b>
         <span>{int(t.altAgl)} ft above ground</span>

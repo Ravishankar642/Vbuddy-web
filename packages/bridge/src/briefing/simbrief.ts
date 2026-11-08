@@ -1,4 +1,4 @@
-import type { AirportBrief, OfpSummary, RouteFix } from "@vbuddy/protocol";
+import type { AirportBrief, FuelPlan, OfpSummary, ProfilePoint, RouteFix } from "@vbuddy/protocol";
 
 type Json = Record<string, unknown>;
 
@@ -34,6 +34,9 @@ export interface MappedOfp {
   ofp: OfpSummary;
   airports: AirportBrief[];
   fixes: RouteFix[];
+  /** The planned vertical profile and fuel along the route (departure first), for flight progress. */
+  profile: ProfilePoint[];
+  fuelPlan: FuelPlan;
 }
 
 /** Picks what the app shows out of SimBrief's big OFP document. Anything missing becomes null. */
@@ -107,5 +110,35 @@ export function mapOfp(j: unknown): MappedOfp | null {
     .map((f) => ({ ident: str(f.ident) ?? "", lat: num(f.pos_lat), lon: num(f.pos_long), altFt: num(f.altitude_feet), via: str(f.via_airway) }))
     .filter((f) => f.ident !== "");
 
-  return { ofp, airports: uniq, fixes };
+  // The vertical profile: SimBrief gives each fix's leg distance, planned altitude, fuel on board and time so far.
+  const stageOf = (v: unknown): ProfilePoint["stage"] => {
+    const t = String(v ?? "").toUpperCase();
+    return t === "CLB" || t === "CRZ" || t === "DSC" ? t : null;
+  };
+  const profile: ProfilePoint[] = [];
+  const oLat = num(origin.pos_lat);
+  const oLon = num(origin.pos_long);
+  if (oLat !== null && oLon !== null)
+    profile.push({ ident: uniq[0]!.icao, lat: oLat, lon: oLon, distNm: 0, altFt: num(origin.elevation) ?? 0, fuelKg: kg(fuel.plan_takeoff), timeMin: 0, stage: "CLB" });
+  let dist = 0;
+  for (const f of list(nav.fix)) {
+    const lat = num(f.pos_lat);
+    const lon = num(f.pos_long);
+    const ident = str(f.ident);
+    if (lat === null || lon === null || ident === null) continue;
+    dist += num(f.distance) ?? 0;
+    const t = num(f.time_total);
+    profile.push({ ident, lat, lon, distNm: dist, altFt: num(f.altitude_feet) ?? profile[profile.length - 1]?.altFt ?? 0, fuelKg: kg(f.fuel_plan_onboard), timeMin: t === null ? null : Math.round(t / 60), stage: stageOf(f.stage), windDeg: num(f.wind_dir), windKt: num(f.wind_spd) });
+  }
+  const reserveKg = kg(fuel.reserve);
+  const alternateKg = kg(fuel.alternate_burn);
+  const fuelPlan: FuelPlan = {
+    takeoffKg: kg(fuel.plan_takeoff),
+    landingKg: kg(fuel.plan_landing),
+    reserveKg,
+    alternateKg,
+    minLandingKg: reserveKg === null ? null : reserveKg + (alternateKg ?? 0),
+  };
+
+  return { ofp, airports: uniq, fixes, profile: profile.slice(0, 1500), fuelPlan };
 }

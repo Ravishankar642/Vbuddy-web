@@ -77,6 +77,22 @@
             <p class="status" id="relayStatus"></p>
           </section>
 
+          <section class="card" id="tsCard" hidden>
+            <div class="row head">
+              <h2>Secure phone link (https)</h2>
+            </div>
+            <p class="muted" id="tsText"></p>
+            <div id="tsLink" hidden>
+              <div class="link"><code id="tsUrl"></code><button class="btn" id="copyTs">Copy</button><button class="btn" id="qrTs">QR</button></div>
+              <div id="tsQr" class="qr" hidden></div>
+            </div>
+            <div class="row">
+              <button class="btn" id="tsServe">Set up</button>
+              <button class="btn" id="tsCheck">Check again</button>
+            </div>
+            <p class="status" id="tsStatus"></p>
+          </section>
+
           <section class="card" id="devicesCard">
             <h2>Paired devices</h2>
             <ul id="devices" class="devices"></ul>

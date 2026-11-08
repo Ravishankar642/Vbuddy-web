@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { EngineGauge, SystemsSnapshot, Telemetry } from "@vbuddy/protocol";
+import { indicatedAlt, type EngineGauge, type SystemsSnapshot, type Telemetry } from "@vbuddy/protocol";
 import type { BridgeSnapshot } from "../lib/bridge-client";
 
 const D = "--";
@@ -276,7 +276,7 @@ export function SystemsView({ b, section = "overview" }: { b: BridgeSnapshot; se
           <Panel title="Instruments" wide chip={phaseChip}>
             <div className="sv__tiles">
               <div><b>{t ? int(t.ias) : D}</b><small>kt IAS</small></div>
-              <div><b>{t ? int(t.altMsl) : D}</b><small>ft MSL</small></div>
+              <div><b>{t ? int(indicatedAlt(t)) : D}</b><small>ft</small></div>
               <div><b>{t ? deg(t.hdgMag) : D}</b><small>HDG</small></div>
               <div><b>{t ? signed(t.vs) : D}</b><small>fpm</small></div>
               <div><b>{t ? t.mach.toFixed(3) : D}</b><small>Mach</small></div>

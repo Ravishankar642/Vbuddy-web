@@ -58,6 +58,7 @@ const EVENT_PREF: Record<FlightEvent["kind"], (p: PushPrefs) => boolean> = {
   planLoaded: (p) => p.planLoaded,
   paused: (p) => p.paused,
   flightStart: () => false,
+  stable: () => false, // shown in the app only; an unstable approach is an alert
 };
 
 /** Saved choices from an older version lack the newer fields; fill them in, and keep numbers in range. */

@@ -215,6 +215,8 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
     // Rain and clouds: over the ground, under the place names and everything else.
     map.createPane("weather").style.zIndex = "240";
     map.getPane("weather")!.style.pointerEvents = "none";
+    // SIGMET outlines: above the weather, under ATC sectors and aircraft; tappable for their details.
+    map.createPane("sigmets").style.zIndex = "390";
     labelLayer.current = L.tileLayer(tiles.labels, { pane: "basemapLabels", maxNativeZoom: tiles.native, maxZoom: 18, opacity: 0.95 }).addTo(map);
 
     const layers: Layers = {
@@ -311,11 +313,33 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
     void loadRadar();
     const timer = window.setInterval(() => void loadRadar(), 10 * 60_000);
     const clouds = weather === "clouds" ? new AuthTileLayer("/api/weather/clouds/{z}/{x}/{y}.png", { pane: "weather", opacity: 0.85, maxNativeZoom: 9, maxZoom: 18, attribution: '<a href="https://openweathermap.org/">OpenWeatherMap</a>' }).addTo(map) : null;
+    // SIGMETs (thunderstorms, turbulence, icing, ash...): outlines from the bridge, which keeps them 15 minutes.
+    const sig = L.layerGroup().addTo(map);
+    const loadSigmets = async () => {
+      try {
+        const j = (await (await apiFetch("/api/weather/sigmets")).json()) as { areas?: SigmetArea[] };
+        if (cancelled) return;
+        sig.clearLayers();
+        for (const a of j.areas ?? []) {
+          const levels = a.baseFt !== null || a.topFt !== null ? ` · ${a.baseFt ? `FL${Math.round(a.baseFt / 100)}` : "SFC"}–${a.topFt ? `FL${Math.round(a.topFt / 100)}` : "?"}` : "";
+          const until = a.validTo ? ` · until ${new Date(a.validTo).toISOString().slice(11, 16)}Z` : "";
+          L.polygon(a.rings, { pane: "sigmets", className: `sig sig--${sigKind(a.hazard)}`, weight: 1.5, fillOpacity: 0.12 })
+            .bindPopup(`<b>${esc([a.qualifier, a.hazard].filter(Boolean).join(" "))}</b>${esc(levels + until)}${a.firName ? `<br>${esc(a.firName)}` : ""}${a.raw ? `<pre class="sig__raw">${esc(a.raw)}</pre>` : ""}`)
+            .addTo(sig);
+        }
+      } catch {
+        /* none for now: the next refresh tries again */
+      }
+    };
+    void loadSigmets();
+    const sigTimer = window.setInterval(() => void loadSigmets(), 15 * 60_000);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      clearInterval(sigTimer);
       radar?.remove();
       clouds?.remove();
+      sig.remove();
     };
   }, [weather]);
 
@@ -553,3 +577,20 @@ export default function MapView({ b, follow, onFollow, showTraffic, showSectors,
 
   return <div ref={el} className="map" role="application" aria-label="Moving map with your aircraft, network traffic and online ATC" />;
 }
+
+interface SigmetArea {
+  hazard: string;
+  qualifier: string | null;
+  baseFt: number | null;
+  topFt: number | null;
+  validTo: number | null;
+  firName: string | null;
+  raw: string | null;
+  rings: Array<Array<[number, number]>>;
+}
+/** The colour group of a SIGMET hazard. */
+function sigKind(h: string): "ts" | "turb" | "ice" | "ash" | "other" {
+  const u = h.toUpperCase();
+  return u.includes("TS") || u.includes("CONV") ? "ts" : u.includes("TURB") || u.includes("MTW") ? "turb" : u.includes("ICE") ? "ice" : u.includes("VA") || u.includes("ASH") ? "ash" : "other";
+}
+

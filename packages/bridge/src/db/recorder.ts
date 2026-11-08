@@ -1,4 +1,4 @@
-import type { Landing, SimStatus, TelemetryFrame } from "@vbuddy/protocol";
+import { indicatedAlt, type Landing, type SimStatus, type TelemetryFrame } from "@vbuddy/protocol";
 import type { FlightDb, FlightPlanFields, FlightRow, FlightUpdate, TrackPoint } from "./flight-db.js";
 import type { Logger } from "../log.js";
 
@@ -91,8 +91,19 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
 
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => this.flush(), this.flushMs);
+    this.timer = setInterval(() => {
+      // While landing the frames wait in memory (a minute is a few hundred), so nothing touches the disk at touchdown.
+      if (!this.held || this.pending.length > this.maxPending / 2) this.flush();
+    }, this.flushMs);
     this.timer.unref();
+  }
+
+  private held = false;
+  /** Holds the timed disk writes (on during the landing); writes everything waiting when let go. */
+  hold(on: boolean) {
+    if (on === this.held) return;
+    this.held = on;
+    if (!on) this.flush();
   }
 
   /** The sim went away: whatever flight was open is over. */
@@ -166,7 +177,7 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
     o.frames++;
     o.lat = f.data.lat;
     o.lon = f.data.lon;
-    o.maxAlt = Math.max(o.maxAlt, f.data.altMsl);
+    o.maxAlt = Math.max(o.maxAlt, indicatedAlt(f.data));
     o.maxGs = Math.max(o.maxGs, f.data.gs);
     o.maxAwayNm = Math.max(o.maxAwayNm, distNm(o.startLat, o.startLon, f.data.lat, f.data.lon));
     if (!f.data.onGround && f.data.altAgl > 100) o.everAirborne = true;
@@ -203,7 +214,7 @@ export class FlightRecorder implements FrameArchive, FlightHistory {
       frames: 0,
       lat: f.data.lat,
       lon: f.data.lon,
-      maxAlt: f.data.altMsl,
+      maxAlt: indicatedAlt(f.data),
       maxGs: f.data.gs,
       dirty: true,
       planned: false,

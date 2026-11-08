@@ -1,4 +1,4 @@
-import type { FlightEvent, Telemetry } from "@vbuddy/protocol";
+import { indicatedAlt, type FlightEvent, type Telemetry } from "@vbuddy/protocol";
 import { nm } from "../sim/flight-gate.js";
 import type { SimExtras } from "../sim/source.js";
 
@@ -62,14 +62,15 @@ export class FlightEvents {
         out.push(ev("takeoff", "Airborne", `Wheels up${this.plan ? `, on the way to ${this.plan.arr}` : ""}.`));
       }
     } else this.airborneSince = null;
-    this.maxAlt = Math.max(this.maxAlt, t.altMsl);
+    const alt = indicatedAlt(t); // what the altimeter shows, like the flight plan's levels
+    this.maxAlt = Math.max(this.maxAlt, alt);
 
     // --- 10,000 ft
-    if (this.tookOff && !this.tenUp && t.altMsl >= 10_000 && t.vs > 300) {
+    if (this.tookOff && !this.tenUp && alt >= 10_000 && t.vs > 300) {
       this.tenUp = true;
       out.push(ev("tenK", "Passing 10,000 ft", "Climbing through 10,000 ft."));
     }
-    if (this.tookOff && this.tenUp && !this.tenDown && this.maxAlt > 12_000 && t.altMsl <= 10_000 && t.vs < -300) {
+    if (this.tookOff && this.tenUp && !this.tenDown && this.maxAlt > 12_000 && alt <= 10_000 && t.vs < -300) {
       this.tenDown = true;
       out.push(ev("tenK", "Passing 10,000 ft", "Descending through 10,000 ft."));
     }
@@ -77,12 +78,12 @@ export class FlightEvents {
     // --- top of climb: the cruise altitude of the plan, or levelled off high for two minutes
     if (this.tookOff && !this.toc) {
       const cruise = this.plan?.cruiseFt ?? null;
-      const level = Math.abs(t.vs) < 300 && t.altMsl > 10_000;
+      const level = Math.abs(t.vs) < 300 && alt > 10_000;
       if (level) this.levelSince ??= at;
       else this.levelSince = null;
-      if ((cruise !== null && t.altMsl >= cruise - 300 && Math.abs(t.vs) < 500) || (cruise === null && this.levelSince !== null && at - this.levelSince > 120_000)) {
+      if ((cruise !== null && alt >= cruise - 300 && Math.abs(t.vs) < 500) || (cruise === null && this.levelSince !== null && at - this.levelSince > 120_000)) {
         this.toc = true;
-        out.push(ev("toc", "Top of climb", `Levelled off at ${fl(t.altMsl)}.`));
+        out.push(ev("toc", "Top of climb", `Levelled off at ${fl(alt)}.`));
       }
     }
 

@@ -1,5 +1,7 @@
 import type { CduSource } from "./pmdg/pmdg-panel.js";
-import { envelope, type FlightAlert, type FlightEvent, type FlightPlanInfo, parseClientMessage, PLUGIN_PATH, PluginToBridgeSchema, WS_PATH, type ServerMessageBody } from "@vbuddy/protocol";
+import type { AppSettings } from "./app-settings.js";
+import type { WatchLinks } from "./watch-link.js";
+import { envelope, parseAtis, type FlightAlert, type FlightEvent, type FlightPlanInfo, type Progress, parseClientMessage, PLUGIN_PATH, PluginToBridgeSchema, WS_PATH, type ServerMessageBody } from "@vbuddy/protocol";
 import type { BriefingService } from "./briefing/service.js";
 import type { HoppieService } from "./acars/hoppie.js";
 import { readFile } from "node:fs/promises";
@@ -53,6 +55,8 @@ interface Client {
   /** Came in through the relay (never "local", whatever address it claims). */
   relayed: boolean;
   /** Relayed and not paired: may only pair until it is. */
+  /** Came in on the shared-flight link: view only. */
+  viewer?: boolean;
   locked: boolean;
   resume: { sessionId: string; lastSeq: number } | undefined;
   /** Watching the live sim view. */
@@ -69,6 +73,18 @@ interface Client {
 export interface ServerExtras {
   flightEvents?: { onEvent(cb: (e: FlightEvent) => void): void } | null;
   plan?: { current(): FlightPlanInfo | null; onChange(cb: (p: FlightPlanInfo | null) => void): void } | null;
+  /** The shared-flight (view only) link: the tokens, and the relay address to build it on (null when the relay is off). */
+  watch?: { links: WatchLinks; base(): string | null } | null;
+  /** The app's settings kept on the PC (paired devices and this PC only). */
+  appSettings?: AppSettings | null;
+  /** The health page and the diagnostics file (paired devices and this PC only). */
+  health?: { items(): unknown[]; diagnostics(): unknown } | null;
+  /** VATSIM events at given airports. */
+  events?: { at(icaos: string[]): Promise<unknown[]> } | null;
+  /** International SIGMETs for the map's weather layer. */
+  sigmets?: { get(): Promise<unknown[]> } | null;
+  /** Flight progress against the plan (vertical profile, fuel). */
+  progress?: { current(): Progress | null; onChange(cb: (p: Progress | null) => void): void } | null;
   screenshots?: Screenshots | null;
   /** A cloud/rain map tile from OpenWeatherMap through this PC (the key stays here). Null = no key. */
   weatherTile?: ((layer: string, z: number, x: number, y: number) => Promise<Buffer | null>) | null;
@@ -109,7 +125,7 @@ export interface ConsoleHooks {
   /** The window checked in (it does every 2 s): visible is false while it is minimised. */
   seen?(visible: boolean): void;
 }
-export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice" | "lite";
+export type ConsoleAction = "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice" | "lite" | "tailscale";
 
 export interface RelayServerOptions {
   /** Random per run; the relay client sends it so requests through the relay can be told from loopback ones. */
@@ -274,6 +290,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     }
     send(ws, { t: "landingList", landings: landings.list() });
     if (opts.plan) send(ws, { t: "flightPlan", plan: opts.plan.current() });
+    if (opts.progress) send(ws, { t: "progress", progress: opts.progress.current() });
     send(ws, atcListBody());
     if (network) {
       send(ws, { t: "atcPosition", position: network.position() });
@@ -289,6 +306,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     sendPush(client);
     if (opts.taxi) send(ws, { t: "taxiGuide", guide: opts.taxi.guide() });
     if (opts.perf) send(ws, { t: "perfState", ...opts.perf.state() });
+    if (opts.appSettings && trusted(client)) send(ws, { t: "appSettings", ...opts.appSettings.get() });
     clients.add(client);
     countScreens();
     log.info(
@@ -337,7 +355,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
         return json(res, 200, consoleHooks.info());
       }
       if (url === "/api/console/activity" && req.method === "GET") return json(res, 200, consoleHooks.activity());
-      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall|voice|lite)$/.exec(url);
+      const m = /^\/api\/console\/(relay|newCode|forget|integrations|autostart|installPlugin|reconnectSim|pause|updateCheck|updateInstall|voice|lite|tailscale)$/.exec(url);
       if (m && req.method === "POST" && req.headers["x-vbuddy-console"] === "1") {
         let raw = "";
         for await (const chunk of req) {
@@ -355,7 +373,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       }
       return json(res, 405, { error: "method not allowed" });
     }
-    if (url.startsWith("/api/") && url !== "/api/health" && relayOpt?.access === "paired" && relayInfo(req).relayed && !pairing?.verify(bearer(req))) {
+    // A friend on the shared-flight link may read (GET) what the app shows; nothing else.
+    const watcher = req.method === "GET" && !!opts.watch?.links.verify(String(req.headers["x-vbuddy-watch"] ?? ""));
+    if (url.startsWith("/api/") && url !== "/api/health" && relayOpt?.access === "paired" && relayInfo(req).relayed && !pairing?.verify(bearer(req)) && !watcher) {
       res.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify({ error: "pair this device first" }));
       return;
@@ -386,6 +406,16 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       res.writeHead(body ? 200 : 404, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(body ?? { error: "not found" }));
       return;
+    }
+    if (url.startsWith("/api/network/atis?")) {
+      const icao = (new URL(url, "http://x").searchParams.get("icao") ?? "").toUpperCase();
+      if (!/^[A-Z0-9]{4}$/.test(icao)) return json(res, 400, { error: "Give an airport code." });
+      const a = network?.atis?.(icao) ?? null;
+      return json(res, 200, { atis: a ? { ...a, ...parseAtis(a.text, a.code) } : null });
+    }
+    if (url.startsWith("/api/network/events?")) {
+      const icaos = (new URL(url, "http://x").searchParams.get("icaos") ?? "").toUpperCase().split(",").filter((x) => /^[A-Z0-9]{4}$/.test(x)).slice(0, 6);
+      return json(res, 200, { events: opts.events && icaos.length ? await opts.events.at(icaos) : [] });
     }
     if (url.startsWith("/api/network/boundaries")) {
       const ids = (new URL(url, "http://x").searchParams.get("ids") ?? "").split(",").filter(Boolean).slice(0, 300);
@@ -427,7 +457,14 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       const r = await g.get(m[1]!, u.searchParams.get("refresh") === "1");
       return json(res, r.chart ? 200 : 404, r);
     }
+    if (url === "/api/health/check" || url === "/api/diagnostics") {
+      // Only this PC (not through a proxy or the relay) or a paired device.
+      const here = !relayInfo(req).relayed && isLocalAddress(req.socket.remoteAddress) && req.headers["x-forwarded-for"] === undefined;
+      if (!opts.health || !(here || pairing?.verify(bearer(req)))) return json(res, 401, { error: "Pair this device to see VBuddy's health." });
+      return json(res, 200, url === "/api/diagnostics" ? opts.health.diagnostics() : { items: opts.health.items() });
+    }
     if (url === "/api/weather/info") return json(res, 200, opts.weatherInfo?.() ?? { clouds: false });
+    if (url === "/api/weather/sigmets") return json(res, 200, { areas: opts.sigmets ? await opts.sigmets.get() : [] });
     const wxM = /^\/api\/weather\/(clouds|precipitation)\/(\d{1,2})\/(\d{1,7})\/(\d{1,7})\.png$/.exec(url);
     if (wxM) {
       const tile = opts.weatherTile ? await opts.weatherTile(wxM[1]!, Number(wxM[2]), Number(wxM[3]), Number(wxM[4])).catch(() => null) : null;
@@ -513,6 +550,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
       if (!alive) return ws.terminate();
       alive = false;
       ws.ping();
+      // Also a message the plugin can see (.NET hides WebSocket pings): VBuddy Link 1.0.1+ reconnects after 30 s without one,
+      // so a connection that died without closing doesn't leave it believing it's still linked. Older plugins ignore it.
+      if (ws.readyState === WebSocket.OPEN) ws.send('{"t":"ping"}');
     }, 10_000);
     const link = { send: (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m)), close: () => ws.close(1000, "replaced") };
     const timer = setTimeout(() => ws.close(4000, "no hello"), HELLO_TIMEOUT_MS);
@@ -600,7 +640,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
           local: !via.relayed && isLocalAddress(addr),
           device,
           relayed: via.relayed,
-          locked: via.relayed && relayOpt?.access === "paired" && !device,
+          // A friend's view-only link gets through the relay without pairing, but stays untrusted (no chat, no control).
+          locked: via.relayed && relayOpt?.access === "paired" && !device && !opts.watch?.links.verify(msg.watch),
+          viewer: !device && !!msg.watch && !!opts.watch?.links.verify(msg.watch),
           resume: msg.resume,
         };
         if (client.locked) {
@@ -611,6 +653,7 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
           return;
         }
         openSession(client);
+        if (client.viewer) send(ws, { t: "shareLinkState", url: null, expiresAt: opts.watch?.links.current()?.expiresAt ?? null, viewer: true });
         return;
       }
 
@@ -761,6 +804,28 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
           opts.perf.setLite(msg.on);
           reply();
         }
+      } else if (msg.t === "shareLink") {
+        const w = opts.watch;
+        if (!w || !trusted(client)) send(ws, { t: "shareLinkState", url: null, expiresAt: null, error: "Pair this device first (Systems → Controls)." });
+        else {
+          if (msg.action === "revoke") {
+            w.links.revoke();
+            for (const c of clients) if (c.viewer) c.ws.close(4003, "share ended");
+          }
+          const base = w.base();
+          if (msg.action === "create" && !base) send(ws, { t: "shareLinkState", url: null, expiresAt: null, error: "Turn on the relay (away from home) in the VBuddy window first: a friend reaches your flight through it." });
+          else {
+            const st = msg.action === "create" ? w.links.create() : w.links.current();
+            send(ws, { t: "shareLinkState", url: st && base ? `${base}${base.includes("?") ? "&" : "?"}w=${st.token}` : null, expiresAt: st?.expiresAt ?? null });
+          }
+        }
+      } else if (msg.t === "setAppSettings") {
+        if (opts.appSettings && trusted(client)) {
+          const before = opts.appSettings.get().updatedAt;
+          const doc = opts.appSettings.put(msg.values, msg.updatedAt);
+          // Newer: every paired screen gets it (the checklist you tick on the tablet ticks on the phone too).
+          if (doc && doc.updatedAt !== before) for (const c of clients) if (trusted(c)) send(c.ws, { t: "appSettings", ...doc });
+        }
       } else if (msg.t === "screenshot") {
         const id = msg.id;
         const shots = opts.screenshots;
@@ -826,7 +891,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
     }
   });
   landings.onAdd((landing) => {
-    for (const c of clients) send(c.ws, { t: "landing", reason: "new", landing });
+    // One JSON encoding for every screen (the report carries the whole flare trace).
+    const payload = JSON.stringify(envelope({ t: "landing", reason: "new", landing }));
+    for (const c of clients) if (c.ws.readyState === WebSocket.OPEN) c.ws.send(payload);
   });
   if (network) {
     let lastAtc = "";
@@ -864,6 +931,9 @@ export function startServer(opts: { console?: ConsoleHooks | null; briefing?: Br
   });
   opts.plan?.onChange((plan) => {
     for (const c of clients) send(c.ws, { t: "flightPlan", plan });
+  });
+  opts.progress?.onChange((progress) => {
+    for (const c of clients) send(c.ws, { t: "progress", progress });
   });
   // Notifications aren't pushed to a device that has the app on its screen.
   push?.setWatching((id) => [...clients].some((c) => c.device?.id === id && c.visible === true && c.ws.readyState === WebSocket.OPEN));

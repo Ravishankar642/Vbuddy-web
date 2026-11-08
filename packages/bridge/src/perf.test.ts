@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Telemetry } from "@vbuddy/protocol";
 import { compactTelemetry } from "./hub.js";
-import { frameSkip, inLandingWindow, PerfService } from "./perf.js";
+import { AfterLanding, frameSkip, inLandingWindow, PerfService, readRate } from "./perf.js";
+import { LandingStore } from "./landing/store.js";
 import { audioCtx } from "./voice/whisper.js";
 import { FlightDb } from "./db/flight-db.js";
 import { logger } from "./log.js";
@@ -83,4 +84,54 @@ test("the flight log gives back space left by old telemetry and trims its write-
   assert.equal(statSync(file + "-wal").size, 0);
   assert.equal(db.frameCount(), 1000);
   db.close();
+});
+
+test("FCU and radio reads never run every frame, and drop to once a second while landing or in the background", () => {
+  const every = { normal: 5, lite: 15 };
+  assert.deepEqual(readRate({ lite: false, background: false, landing: false }, every), { period: "frame", skip: 5 });
+  assert.deepEqual(readRate({ lite: true, background: false, landing: false }, every), { period: "frame", skip: 15 });
+  assert.deepEqual(readRate({ lite: false, background: false, landing: true }, every), { period: "second", skip: 0 });
+  assert.deepEqual(readRate({ lite: true, background: true, landing: false }, every), { period: "second", skip: 0 });
+});
+
+test("the landing is shown at once but saved (and notified) only after the roll-out", () => {
+  const after = new AfterLanding(logger("test"));
+  const saved: string[] = [];
+  const shown: string[] = [];
+  const store = new LandingStore({ save: (l) => saved.push(l.id), loadRecent: () => [] }, logger("test"), (fn) => after.run(fn));
+  store.onAdd((l) => shown.push(l.id));
+  after.setLanding(true);
+  store.add({ id: "a", ts: 1 } as never);
+  assert.deepEqual(shown, ["a"]);
+  assert.deepEqual(saved, []);
+  assert.equal(after.waiting, 1);
+  after.setLanding(false);
+  assert.deepEqual(saved, ["a"]);
+  // Not landing: saved straight away.
+  store.add({ id: "b", ts: 2 } as never);
+  assert.deepEqual(saved, ["a", "b"]);
+});
+
+test("work held for the landing runs anyway after the cap, and a failing task doesn't stop the rest", async () => {
+  const after = new AfterLanding(logger("test"), 20);
+  const ran: number[] = [];
+  after.setLanding(true);
+  after.run(() => {
+    throw new Error("boom");
+  });
+  after.run(() => ran.push(1));
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(ran, [1]);
+  assert.equal(after.waiting, 0);
+});
+
+test("the altimeter reading is kept (whole feet) and shown instead of true altitude", async () => {
+  const { indicatedAlt } = await import("@vbuddy/protocol");
+  const base = { altMsl: 36_512.37 } as Parameters<typeof compactTelemetry>[0];
+  const withInd = compactTelemetry({ ...base, ap: { master: false, altSel: 0, hdgSel: 0, spdSel: 0, vsSel: 0 }, altInd: 35_003.6 } as never);
+  assert.equal(withInd.altInd, 35_004);
+  assert.equal(indicatedAlt(withInd), 35_004);
+  const old = compactTelemetry({ ...base, ap: { master: false, altSel: 0, hdgSel: 0, spdSel: 0, vsSel: 0 } } as never);
+  assert.equal("altInd" in old, false);
+  assert.equal(indicatedAlt(old), 36_512.4);
 });

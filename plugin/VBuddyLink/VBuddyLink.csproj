@@ -17,7 +17,7 @@
     <OutputType>Library</OutputType>
     <LangVersion>latest</LangVersion>
     <Deterministic>true</Deterministic>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <VpilotSdk Condition="'$(VpilotSdk)' == ''">$(LOCALAPPDATA)\vPilot\RossCarlson.Vatsim.Vpilot.Plugins.dll</VpilotSdk>
   </PropertyGroup>

@@ -6,7 +6,7 @@ import { useBridgeActions } from "../lib/useBridge";
 import { existingSubscription, pushSupport, subscribeBrowser, unsubscribeBrowser } from "../lib/push";
 
 const WHY: Record<string, string> = {
-  insecure: "Notifications need a secure (https) address, like your relay link. They can't work on a plain http://192.168… address.",
+  insecure: "Notifications need a secure (https) address. They can't work on a plain http://192.168… address. Use your relay link, or set up the free secure link in the VBuddy window on your PC (Secure phone link, with Tailscale) and open VBuddy from that.",
   "ios-install": "On iPhone and iPad, add VBuddy to your Home Screen first (Share → Add to Home Screen), then open it from there to turn notifications on.",
   unsupported: "This browser can't receive notifications.",
   app: "The VBuddy iPhone app can't receive notifications (iPhone only allows them for App Store apps and Home Screen web apps). For notifications, open your phone link in Safari and add it to your Home Screen (Share → Add to Home Screen) as well; pair it the same way.",

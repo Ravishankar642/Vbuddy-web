@@ -27,6 +27,8 @@ export class LandingStore {
   constructor(
     private persist: LandingPersistence | null,
     private log: Logger,
+    /** When the save may run: by default at once; the bridge holds it until the landing roll-out is over. */
+    private later: (fn: () => void) => void = (fn) => fn(),
   ) {}
 
   load() {
@@ -67,14 +69,16 @@ export class LandingStore {
     if (this.byId.has(l.id)) return;
     this.insert(l);
     for (const cb of this.cbs) cb(l);
-    if (this.persist) {
-      try {
-        this.persist.save(l);
-      } catch (e) {
-        if (!this.writeFailed) this.log.warn(`Couldn't save the landing: ${(e as Error).message}. It's still available until the bridge restarts.`);
-        this.writeFailed = true;
-      }
-    }
+    const persist = this.persist;
+    if (persist)
+      this.later(() => {
+        try {
+          persist.save(l);
+        } catch (e) {
+          if (!this.writeFailed) this.log.warn(`Couldn't save the landing: ${(e as Error).message}. It's still available until the bridge restarts.`);
+          this.writeFailed = true;
+        }
+      });
   }
 
   /** Newest first, without traces. */

@@ -3,6 +3,7 @@ import { DataRequestFlag, EventFlag, RawBuffer, SimConnectConstants, SimConnectD
 import type { RadioBackend, RadioValues } from "./backend.js";
 import { addonOf, comFrequencyMatches, FENIX_RMP, rmpChannelIndex, rmpTuneClicks } from "../panel/addons.js";
 import { LVarChannel } from "../sim/lvars.js";
+import type { ReadRate } from "../perf.js";
 
 /** SimConnect ids for L:var reads and writes here (the panel uses 3000-3199). */
 const LVAR_IDS = 3300;
@@ -103,7 +104,22 @@ export class SimRadios implements RadioBackend {
         xpdr: { code: /^[0-7]{4}$/.test(code) ? code : "0000", mode: XPDR_MODE[state] ?? "other", ident: n[6]! > 0 },
       });
     });
-    this.sim.labelSend?.(h.requestDataOnSimObject(REQ_COMMS, DEF_COMMS, SimConnectConstants.OBJECT_ID_USER, SimConnectPeriod.SIM_FRAME, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED), "radios request");
+    this.request(h);
+  }
+
+  /** Frequencies and the squawk change rarely: not every sim frame, and once a second while landing or in the background. */
+  private rate: ReadRate = { period: "frame", skip: 15 };
+  private request(h: ConnectionHandle) {
+    const r = this.rate;
+    this.sim.labelSend?.(
+      h.requestDataOnSimObject(REQ_COMMS, DEF_COMMS, SimConnectConstants.OBJECT_ID_USER, r.period === "frame" ? SimConnectPeriod.SIM_FRAME : SimConnectPeriod.SECOND, DataRequestFlag.DATA_REQUEST_FLAG_CHANGED, 0, r.skip, 0),
+      "radios request",
+    );
+  }
+  setRate(r: ReadRate) {
+    if (r.period === this.rate.period && r.skip === this.rate.skip) return;
+    this.rate = r;
+    if (this.h) this.request(this.h);
   }
 
   private set(v: RadioValues | null) {

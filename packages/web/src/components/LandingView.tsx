@@ -4,6 +4,10 @@ import type { BridgeSnapshot } from "../lib/bridge-client";
 import { fixed, int, signed, signed1, sinceText, when } from "../lib/format";
 import { useBridgeActions, useNow } from "../lib/useBridge";
 import { FlareChart } from "./FlareChart";
+import { LandingReplay } from "./LandingReplay";
+import { landingCard } from "../lib/share-card";
+import { saveFile } from "../lib/logbook-stats";
+import { flightIdentity } from "../lib/identity";
 import { Flag, Tile } from "./ui";
 
 const RATING: Record<LandingRating, { label: string; icon: string }> = {
@@ -106,6 +110,9 @@ export function LandingView({ b }: { b: BridgeSnapshot }) {
           <span className="debrief__when">
             {sinceText(gone, sel.ts)} · {when(sel.ts)}
           </span>
+          <button type="button" className="btn debrief__share" onClick={() => void shareLanding(sel, Date.now() - sel.ts < 3 * 3_600_000 ? flightIdentity(b).callsign : null)}>
+            Share
+          </button>
         </div>
         <div className="hero" aria-label={`Touchdown at ${sel.vsFpm} feet per minute`}>
           {int(sel.vsFpm)}
@@ -186,8 +193,28 @@ export function LandingView({ b }: { b: BridgeSnapshot }) {
             {flare.pitchChange !== null && ` Pitch ${flare.pitchChange >= 0 ? "up" : "down"} ${fixed(Math.abs(flare.pitchChange), 1)}° from 50 ft.`}
           </div>
         </section>
+        {sel.approach && sel.approach.length > 0 && (
+          <section className="tile tile--wide">
+            <h2 className="tile__label">Stabilised approach</h2>
+            {sel.approach.map((g) => (
+              <div key={g.heightFt} className="ap-gate">
+                <b className={g.stable ? "ap-gate__ok" : "ap-gate__bad"}>
+                  {g.heightFt} ft · {g.stable ? "Stable" : "Unstable"}
+                </b>
+                <ul>
+                  {g.checks.map((c) => (
+                    <li key={c.key} className={c.ok ? "" : "is-bad"}>
+                      {c.label} <span>{c.value}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </section>
+        )}
       </div>
 
+      {full && <LandingReplay key={full.id} landing={full} wait={!!b.perf?.landing} />}
       {full ? (
         <FlareChart landing={full} />
       ) : (
@@ -200,3 +227,11 @@ export function LandingView({ b }: { b: BridgeSnapshot }) {
     </div>
   );
 }
+
+/** A picture of the landing, to the share sheet (or downloaded). The brand colour follows the app's theme. */
+async function shareLanding(l: LandingSummary, callsign: string | null) {
+  const brand = getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() || undefined;
+  const png = await landingCard(l, { callsign, brand });
+  await saveFile(`vbuddy-landing-${new Date(l.ts).toISOString().slice(0, 16).replace(":", "")}.png`, "image/png", png);
+}
+

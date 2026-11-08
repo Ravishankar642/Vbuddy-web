@@ -77,7 +77,7 @@ namespace VBuddyLink
         /// <summary>To vPilot's debug window and to VBuddyLink.log next to the DLL (the window can miss lines written while vPilot starts).</summary>
         private void Log(string msg)
         {
-            try { _vPilot.PostDebugMessage("[VBuddy Link] " + msg); } catch { }
+            // The file first: it never waits on vPilot.
             try
             {
                 lock (_logLock)
@@ -89,6 +89,11 @@ namespace VBuddyLink
                 }
             }
             catch { }
+            // vPilot's debug window is posted to its own thread, never called from the connection thread: if vPilot is busy
+            // (or that call waits on its window), the connection loop must not stop with it.
+            var line = "[VBuddy Link] " + msg;
+            if (_ui != null) { try { _ui.Post(_ => { try { _vPilot.PostDebugMessage(line); } catch { } }, null); } catch { } }
+            else { try { _vPilot.PostDebugMessage(line); } catch { } }
         }
 
         /// <summary>Runs one command from the bridge on vPilot's own thread and reports how it went.</summary>

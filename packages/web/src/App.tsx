@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { InstrumentScreen, SCREENS, type ScreenKind } from "./components/InstrumentScreen";
+import { checkAppSettings } from "./lib/settings-sync";
 import { UpdateBanner } from "./components/AppCard";
 import { PairThisDevice } from "./components/Cockpit";
 import { CommsView } from "./components/CommsView";
 import { playChime, unlockAudioOnFirstTouch } from "./lib/chime";
-import { AtlasTab, CommsTab, MeTab, SystemsTab } from "./components/Pages";
+import { AtlasTab, MeTab, SystemsTab, Traffic } from "./components/Pages";
+import { ApproachMode } from "./components/ApproachMode";
 import { Shell, type Tab } from "./components/Shell";
 import { LiveFlight } from "./components/LiveFlight";
 import { NotificationsPage, usePushResync } from "./components/NotifyCard";
@@ -42,13 +45,35 @@ function useTab(): [Tab, (t: Tab) => void] {
   return [tab, (t) => (window.location.hash = `#${t}`)];
 }
 
+/** "#screen/pfd": this device shows one instrument, full screen (a second screen beside the main one). */
+const screenFromHash = (): ScreenKind | null => {
+  const [h, k] = window.location.hash.slice(1).split("/");
+  return h === "screen" && SCREENS.some(([x]) => x === k) ? (k as ScreenKind) : null;
+};
+function useScreen(): ScreenKind | null {
+  const [s, setS] = useState(screenFromHash);
+  useEffect(() => {
+    const on = () => setS(screenFromHash());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return s;
+}
+
 const TOAST_MS = 30_000;
 const EVENT_TOAST_MS = 12_000;
 const ATC_TOAST_MS = 25_000;
 const FLIGHT_ALERT_MS = 30_000;
 
 export function App() {
+  const { pushAppSettings } = useBridgeActions();
+  // Settings kept on the PC for your other devices: checked every 5 s (on this device only; cheap).
+  useEffect(() => {
+    const t = window.setInterval(() => checkAppSettings(pushAppSettings), 5000);
+    return () => clearInterval(t);
+  }, [pushAppSettings]);
   const b = useBridge();
+  const screen = useScreen();
   const { dismissNewLanding, dismissAtcAlert, dismissFlightAlert, dismissFlightEvent, dismissAttention, dismissTaxiNotice } = useBridgeActions();
   const taxiPrefs = useTaxiScreenPrefs();
   const [tab, setTab] = useTab();
@@ -136,6 +161,14 @@ export function App() {
   const overlay = (
     <>
       <UpdateBanner />
+      {b.share?.viewer && (
+        <div className="toast toast--event" role="status">
+          <span className="toast__text">
+            <b>Following {flightIdentity(b).callsign ?? "a flight"}</b>
+            <span>View only, shared by the pilot.</span>
+          </span>
+        </div>
+      )}
       {showTaxiBar && <TaxiBanner g={b.taxi!} onOpen={() => setTab("ground")} />}
       {taxiNotice && !(showTaxiBar && taxiNotice.tag === "next") && (
         <div className="toast toast--event" role="status" aria-live="polite">
@@ -245,7 +278,10 @@ export function App() {
     </div>
   );
 
+  if (screen) return <InstrumentScreen b={b} kind={screen} />;
   return (
+    <>
+    {t && <ApproachMode b={b} t={t} />}
     <Shell b={b} tab={tab} setTab={setTab} title={TITLES[tab]} overlay={overlay}>
       {b.control?.locked ? (
         <PairThisDevice gate />
@@ -256,7 +292,7 @@ export function App() {
       ) : tab === "systems" ? (
         <SystemsTab b={b} />
       ) : tab === "comms" ? (
-        <CommsTab b={b} comms={<CommsView b={b} />} />
+        <CommsView b={b} traffic={<Traffic b={b} />} />
       ) : tab === "atlas" ? (
         <AtlasTab b={b} />
       ) : tab === "search" ? (
@@ -267,5 +303,6 @@ export function App() {
         <MeTab b={b} openAlerts={() => setTab("alerts")} />
       )}
     </Shell>
+    </>
   );
 }

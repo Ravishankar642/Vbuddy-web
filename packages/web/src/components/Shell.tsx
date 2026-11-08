@@ -19,7 +19,7 @@ const TABS: Array<[Exclude<Tab, "search" | "me" | "alerts">, string, () => Retur
 ];
 
 const WEATHER_KEY = "vbuddy.map.weather";
-const WEATHER_LABEL: Record<WeatherMode, string> = { off: "Weather off", rain: "Rain radar", clouds: "Rain and clouds" };
+const WEATHER_LABEL: Record<WeatherMode, string> = { off: "Off", rain: "Rain radar", clouds: "Rain and clouds" };
 function readWeather(): WeatherMode {
   try {
     const v = localStorage.getItem(WEATHER_KEY);
@@ -37,7 +37,7 @@ function bridgeStatus(b: BridgeSnapshot): { tone: "ok" | "warn" | "bad"; head: s
   if (b.link !== "open") return { tone: "bad", head: "Not connected", sub: b.link === "waiting" ? `Retrying in ${b.retryIn}s` : "Connecting…", retry: true };
   if (!b.sim?.connected) return { tone: "warn", head: where, sub: "Sim waiting", retry: false };
   if (b.sim.paused) return { tone: "ok", head: where, sub: "Sim paused", retry: false };
-  return { tone: "ok", head: where, sub: b.sim.source === "mock" ? "Mock flight" : "Sim connected", retry: false };
+  return { tone: "ok", head: where, sub: b.sim.source === "mock" ? "Test flight" : "Sim connected", retry: false };
 }
 
 interface ShellProps {
@@ -64,6 +64,16 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
   const [traffic, setTraffic] = useState(true);
   const [sectors, setSectors] = useState(true);
   const [weather, setWeatherState] = useState<WeatherMode>(readWeather);
+  const [opts, setOpts] = useState(false);
+  // The map options close when you tap anywhere else.
+  useEffect(() => {
+    if (!opts) return;
+    const off = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.(".ms__optsWrap")) setOpts(false);
+    };
+    document.addEventListener("pointerdown", off);
+    return () => document.removeEventListener("pointerdown", off);
+  }, [opts]);
   // Clouds need an OpenWeatherMap key in the VBuddy window on the PC; the rain radar doesn't.
   const [cloudsOk, setCloudsOk] = useState(false);
   useEffect(() => {
@@ -109,55 +119,66 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
         </Suspense>
       </div>
 
+      {/* One row along the top: how the PC is reached, then notifications and settings. */}
       <div className="ms__top">
-        <div className="ms__topL">
         <button type="button" className="ms__pill" onClick={st.retry ? () => window.location.reload() : undefined} aria-label={`${st.head}. ${st.sub}`}>
           <i className={`ms__dot ms__dot--${st.tone}`} />
           <span className="ms__pillText">
-            <span>
-              <b>{st.head}</b> <em>Bridge</em>
-            </span>
+            <b>{st.head}</b>
             <small>{st.sub}</small>
           </span>
           {st.retry && <IconRefresh />}
         </button>
-        {/* Settings and notifications float over the map, so the sheet has nothing above the page itself. */}
         <div className="ms__me">
-          <button type="button" className={`ms__avatar${tab === "me" ? " is-on" : ""}`} onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings"} title="Settings">
-            {tab === "me" ? <IconClose /> : "V"}
-            {!locked && b.link === "open" && tab !== "me" && <i />}
-          </button>
           <button type="button" className={`ms__bell${tab === "alerts" ? " is-on" : ""}`} onClick={() => setTab(tab === "alerts" ? "flights" : "alerts")} aria-label={tab === "alerts" ? "Close notifications" : "Notifications"} title="Notifications">
             {tab === "alerts" ? <IconClose /> : <IconBell />}
             {b.push && !b.push.subscribed && b.control?.reason === "paired" && tab !== "alerts" && <i />}
           </button>
-        </div>
-        </div>
-        <div className="ms__fabs">
-          <button type="button" className="ms__fab" onClick={cycleMapStyle} aria-label={`Map style: ${styleLabel}. Tap to change.`} title={`Map style: ${styleLabel}`}>
-            <IconGlobe />
+          <button type="button" className={`ms__avatar${tab === "me" ? " is-on" : ""}`} onClick={() => setTab(tab === "me" ? "flights" : "me")} aria-label={tab === "me" ? "Close settings" : "Settings"} title="Settings">
+            {tab === "me" ? <IconClose /> : "V"}
+            {!locked && b.link === "open" && tab !== "me" && <i />}
           </button>
-          <button type="button" className={`ms__fab${traffic ? " is-on" : ""}`} aria-pressed={traffic} onClick={() => setTraffic(!traffic)} title="Network traffic">
-            <IconBroadcast />
-          </button>
-          <button type="button" className={`ms__fab${sectors ? " is-on" : ""}`} aria-pressed={sectors} onClick={() => setSectors(!sectors)} title="ATC sectors and airports">
+        </div>
+      </div>
+
+      {/* Three map buttons: search, the map options (style, traffic, sectors, weather) and follow. */}
+      <div className="ms__fabs">
+        <button type="button" className={`ms__fab${tab === "search" ? " is-on" : ""}`} aria-label="Search airports and your flight plan" title="Search" onClick={() => pick("search")}>
+          <IconSearch />
+        </button>
+        <div className="ms__optsWrap">
+          <button type="button" className={`ms__fab${opts ? " is-on" : ""}`} aria-expanded={opts} aria-label="Map options" title="Map options" onClick={() => setOpts(!opts)}>
             <IconLayers />
+            {shownWeather !== "off" && <i className="ms__fabDot" aria-hidden />}
           </button>
-          <button
-            type="button"
-            className={`ms__fab${shownWeather !== "off" ? " is-on" : ""}`}
-            aria-pressed={shownWeather !== "off"}
-            onClick={cycleWeather}
-            title={`${WEATHER_LABEL[shownWeather]}. Tap to change.${cloudsOk ? "" : " Clouds need an OpenWeatherMap key in the VBuddy window."}`}
-            aria-label={`${WEATHER_LABEL[shownWeather]}. Tap to change.`}
-          >
-            <IconRain />
-            {shownWeather === "clouds" && <i className="ms__fabDot" aria-hidden />}
-          </button>
-          <button type="button" className={`ms__fab${follow ? " is-on" : ""}`} aria-pressed={follow} onClick={() => setFollow(!follow)} title={follow ? "Following your aircraft" : "Follow your aircraft"}>
-            <IconLocate on={follow} />
-          </button>
+          {opts && (
+            <div className="ms__opts" role="dialog" aria-label="Map options">
+              <button type="button" className="ms__opt" onClick={cycleMapStyle}>
+                <IconGlobe />
+                <span>Map</span>
+                <em>{styleLabel}</em>
+              </button>
+              <button type="button" className="ms__opt" aria-pressed={traffic} onClick={() => setTraffic(!traffic)}>
+                <IconBroadcast />
+                <span>Traffic</span>
+                <em className={traffic ? "is-on" : ""}>{traffic ? "On" : "Off"}</em>
+              </button>
+              <button type="button" className="ms__opt" aria-pressed={sectors} onClick={() => setSectors(!sectors)}>
+                <IconLayers />
+                <span>ATC and airports</span>
+                <em className={sectors ? "is-on" : ""}>{sectors ? "On" : "Off"}</em>
+              </button>
+              <button type="button" className="ms__opt" onClick={cycleWeather} title={cloudsOk ? undefined : "Clouds need an OpenWeatherMap key in the VBuddy window."}>
+                <IconRain />
+                <span>Weather</span>
+                <em className={shownWeather !== "off" ? "is-on" : ""}>{WEATHER_LABEL[shownWeather]}</em>
+              </button>
+            </div>
+          )}
         </div>
+        <button type="button" className={`ms__fab ms__fab--follow${follow ? " is-on" : ""}`} aria-pressed={follow} onClick={() => setFollow(!follow)} aria-label={follow ? "Following your aircraft" : "Follow your aircraft"} title={follow ? "Following your aircraft" : "Follow your aircraft"}>
+          <IconLocate on={follow} />
+        </button>
       </div>
 
       <div className="ms__over">{overlay}</div>
@@ -186,9 +207,6 @@ export function Shell({ b, tab, setTab, title, left, overlay, children }: ShellP
               </button>
             ))}
           </div>
-          <button type="button" className="ms__search" aria-current={tab === "search" ? "page" : undefined} aria-label="Search airports and your flight plan" onClick={() => pick("search")}>
-            <IconSearch />
-          </button>
         </nav>
       </section>
     </div>

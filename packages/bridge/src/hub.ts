@@ -33,6 +33,7 @@ export function compactTelemetry(t: Telemetry): Telemetry {
     lat: r(t.lat, 6),
     lon: r(t.lon, 6),
     altMsl: r(t.altMsl, 1),
+    ...(t.altInd !== undefined ? { altInd: r(t.altInd, 0) } : {}),
     altAgl: r(t.altAgl, 1),
     groundElev: r(t.groundElev, 1),
     pitch: r(t.pitch, 2),

@@ -367,6 +367,10 @@ export class LandingAnalyzer {
         ias: r1(en.t.ias),
         g: r2(en.t.gForce),
         onGround: en.t.onGround,
+        lat: Math.round(en.t.lat * 1e6) / 1e6,
+        lon: Math.round(en.t.lon * 1e6) / 1e6,
+        bank: r1(en.t.bank),
+        hdg: r1(en.t.hdgTrue),
       });
     }
 

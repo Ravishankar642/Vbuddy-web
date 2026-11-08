@@ -219,3 +219,17 @@ test("resume still reports a gap when the log has been pruned or is broken", asy
   assert.equal(hub.resume(hub.sessionId, 9).status, "gap", "a failing disk doesn't break the reconnect");
   db.close();
 });
+
+test("recorder: while landing the timed writes wait in memory, then everything is written when let go", async () => {
+  const db = await mem();
+  const rec = new FlightRecorder(db, "sess", "mock", () => "A320", log, { flushMs: 10 });
+  rec.start();
+  rec.hold(true);
+  for (let i = 0; i < 5; i++) rec.onFrame(frame(i));
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(db.frameCount(), 0, "nothing written during the landing");
+  rec.hold(false);
+  assert.equal(db.frameCount(), 5);
+  rec.stop();
+  db.close();
+});

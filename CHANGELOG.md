@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.0.0
+
+- **Profile and fuel (Live page).** A new section for flights with a matching SimBrief plan:
+  - **Vertical profile chart:** the plan's climb, cruise and descent, the top of descent, and where you are on it.
+  - **Altitude against the plan:** the planned altitude here and how far above or below it you are. On the descent you're flagged high or low when more than 1,000 ft off.
+  - **Distance to the top of descent,** and the next fix.
+  - **Fuel against the plan:** fuel now vs what SimBrief planned at this point, and the fuel you'll land with at this rate.
+- **Fuel alerts:** a notification when you're heading for a landing below reserve + alternate, and another if it drops into the final reserve.
+- **Stabilised approach checks** at 1,000 ft and 500 ft above the ground on the way down: gear, flaps, sink rate (1,000 fpm at most), steady speed, bank and descent path (2–4°). Stable shows a note in the app; unstable sends an alert, and at 500 ft it suggests a go-around. Both gates appear in the landing report. They're checked twice a second from data VBuddy already reads, so they add nothing to the sim's load.
+- **Wind ahead:** SimBrief's forecast wind for the rest of the route, as an average tailwind or headwind (Live → Profile and fuel).
+- **Destination weather watch:** in flight, VBuddy checks the destination's METAR every 10 minutes. It alerts you when the weather gets worse (VFR → IFR and so on), when gusts reach 25 kt, or when thunderstorms are reported.
+- **SIGMETs on the map:** thunderstorm, turbulence, icing and volcanic ash areas show whenever map weather is on. Tap one to read it. They're fetched only while a map shows weather, and kept 15 minutes.
+- **Landing replay** (Logbook → a landing). Play back the last 20 seconds from above and from the side, with height, sink, speed, pitch, bank and G at each moment. Where VBuddy has the airport's runway layout, it also shows where you touched down: the runway, how far past the threshold, how far off the centreline, and how much runway was left. The replay is worked out on your phone; the bridge only adds position to the landing record.
+- **Landing record** (Logbook → Overview): average and softest sink rate, landings by rating, your current and best run of landings rated normal or better, your last 10 landings against the 10 before, and averages per aircraft.
+- **Badges** for things you've flown: first butter, 10/50/100 landings, runs of 5 and 20 good landings, a good crosswind landing, 5 stable approaches, 10 airports, an 8-hour flight.
+- **Export** your landings or flights as CSV, or everything as JSON. On a phone it goes to the share sheet.
+- **Share a landing** as a picture (the Share button on a landing): sink rate, rating, G, speed, pitch and wind, in your airline's colours.
+- **Instructions picked out of ATC messages** (Comms → Messages): levels, altitudes, headings, speeds, frequencies, squawk, QNH and directs show as chips under each message, from typed text or voice to text. Tap a frequency to tune COM1, or a squawk to set the transponder.
+- **Next controller, one tap:** Live → Airspace now has a "Tune COM1" button for the next station along your route.
+- **Destination ATIS:** when an ATIS is online at your destination, Live → Airspace shows its letter, runways in use and QNH, with a "Tune COM2" button.
+- **VATSIM events** at your departure or destination in the next 24 hours show in Live → Airspace (checked at most once an hour).
+- **New look on phones:**
+  - **Map:** one row along the top (status, notifications, settings) and three map buttons. Search, follow, and a map options menu holding map style, traffic, ATC and weather. Alerts are shorter.
+  - **Flight card:** a phase card with the number that matters now (time to top of descent in cruise, time to landing on the way down), a route bar with your aircraft and the top of descent, four tiles (altitude, ground speed, vertical speed, landing fuel) and a "Next up" card to tune the next controller.
+  - **Comms:** one row of tabs (Radio · Messages · ACARS · Traffic), and a "Latest for you" card with ATC's last call to you, its instructions as chips and the readback written out.
+  - **Logbook:** a totals strip and your last 20 landings as a chart.
+- **Approach mode:** below 2,000 ft with the gear down and descending, a focused screen opens by itself. It shows big radio height and sink rate, where you are against a 3° path, the stabilised-approach checks as they stand, and IAS, GS and altitude. It closes at touchdown, or with ✕. It's worked out on your phone.
+- **Checklists** (Live → Checklists): before start through parking, in Airbus or Boeing style depending on the aircraft (a general one otherwise). The checklist for the moment is picked for you. Items the sim can confirm tick themselves (parking brake, engines, flaps, gear, transponder, autopilot). Ticks are kept on your phone for the flight.
+- **Health** (Settings, top): the bridge, simulator, vPilot link, voice to text, relay, SimBrief, VATSIM data, updates and PC load, each with what to do when something is wrong. **Diagnostics file** saves the settings, what's connected and the bridge's recent log for a bug report, with pairing codes and links left out. Only this PC and paired devices can see it.
+- **Settings follow you between devices:** theme, airline colours, map style and weather, chime, ATC auto-play, the Live page's open sections and checklist ticks are kept on the PC. A newly paired phone or tablet starts with them, and a checklist ticked on the tablet ticks on the phone. This works through the relay too. Pairing details and caches stay on each device.
+- **Secure phone link (home-network edition):** the VBuddy window gets a "Secure phone link (https)" card. With Tailscale (free) on your PC and phone, one click (Set up) gives VBuddy an https address on your tailnet. Open VBuddy on your phone from that address and notifications work, without the cloud relay. Devices still need to be paired. Health shows whether it's set up.
+- **Second screen** (Settings → Second screen): use an old phone or a tablet as one instrument, full screen and kept awake:
+  - **Flight display:** attitude with pitch and bank, speed, altitude, vertical speed, heading, and the autopilot targets.
+  - **MCDU / CDU:** the aircraft's FMS, full size.
+  - **My dashboard:** pick and order the tiles you want (speeds, altitude, heading, top of descent, landing fuel, wind ahead, COM1, squawk and more). Your choice follows you to your other devices.
+
+  Everything is drawn on the device.
+- **Share my flight** (Settings): make a link a friend can open to follow your flight through the relay, without pairing. They see the map, your flight card and landings, view only (no messages, controls or settings). It works for 24 hours, or until you tap Stop sharing. Needs the relay on.
+
+## 2.1.6
+
+- **Altitude now matches your altimeter.** The app showed true altitude, which in air warmer or colder than standard is over 1,000 ft off what the PFD shows in cruise. It now shows the altimeter's reading (with your baro setting), as do top of climb, the 10,000 ft events and the flight log's highest altitude. The map, traffic and landing data still use true altitude.
+
+## 2.1.5
+
+- **vPilot link reconnects by itself.** After the bridge restarted, the VBuddy Link plugin could keep believing it was still connected and never come back, so the bridge said "Plugin not connected" until vPilot was restarted. The bridge now sends the plugin a check-in every 10 s. VBuddy Link 1.0.1 reconnects when it hasn't heard one for 30 s.
+- VBuddy Link no longer waits on vPilot's debug window while it writes its log, so a busy vPilot can't stall the connection.
+- Update the plugin with the installer's "vPilot plugin" option. Restart vPilot once afterwards.
+
+## 2.1.4
+
+- **No more touchdown stutter from VBuddy.** Some reads still ran on every sim frame, even in Lite mode. They're now throttled too:
+  - **Fenix FCU:** VBuddy read about 55 cockpit (L:) variables on every frame, which is the most expensive thing to ask the sim for. It now reads them every 6th frame (every 16th in Lite mode), and once a second while landing or with nobody looking. Knobs and lights on the phone still respond straight away.
+  - **Radios and transponder:** read every 16th frame (every 46th in Lite mode), and once a second while landing or in the background.
+- **Nothing touches the disk at touchdown.** During the landing, flight-log writes wait in memory, and the landing itself is saved once the roll-out is over. The touchdown report still appears in the app straight away. The "you landed" notification also waits until the roll-out is over (90 s at most).
+- The touchdown report is encoded once for all screens instead of once per screen.
+
 ## 2.1.3
 
 - **A lighter bridge.** VBuddy asks MSFS for much less. In cruise the flight data comes every 4th sim frame instead of every frame. The wind and touchdown values are no longer sent separately on every frame, and engine gauges are read about 6 times a second instead of 15.

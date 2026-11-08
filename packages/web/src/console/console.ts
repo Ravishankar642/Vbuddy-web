@@ -13,6 +13,7 @@ interface Info {
   clients: number;
   pairing: { code: string; expiresAt: number } | null;
   devices: Array<{ id: string; name: string; pairedAt: number; lastSeen: number | null }>;
+  tailscale?: { installed: boolean; running: boolean; dnsName: string | null; url: string | null; error: string | null };
   relay: { available: boolean; enabled: boolean; state: "off" | "connecting" | "connected"; url: string; shared: boolean; id: string; phoneLink: string; access: "paired" | "open"; error: string };
   accounts: { simbrief: string; hoppieSet: boolean; owmSet?: boolean; sayintentionsSet?: boolean; beyondatc?: boolean };
   atcApps?: { sayintentions: AppStatus; beyondatc: AppStatus };
@@ -121,6 +122,28 @@ function render(i: Info) {
     setText($("code"), i.pairing.code);
     const s = Math.max(0, Math.round((i.pairing.expiresAt - Date.now()) / 1000));
     setText($("codeTtl"), `Changes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`);
+  }
+
+  // secure link (Tailscale), for the home-network edition: notifications need https
+  const ts = i.tailscale;
+  $("tsCard").hidden = i.relay.available || !ts;
+  if (ts) {
+    setText(
+      $("tsText"),
+      ts.url
+        ? "Open VBuddy on your phone from this https address (with Tailscale on the phone too). Notifications work there."
+        : ts.installed
+          ? ts.running
+            ? "Tailscale is on. Set it up to give VBuddy an https address on your tailnet; notifications need https."
+            : "Tailscale is installed but not connected. Sign in to Tailscale on this PC, then check again."
+          : "Phones only allow notifications on an https address. Install Tailscale (free) on this PC and your phone, sign in to both with the same account, then come back here.",
+    );
+    $("tsLink").hidden = !ts.url;
+    setText($("tsUrl"), ts.url ?? "");
+    $<HTMLButtonElement>("tsServe").hidden = !!ts.url || !ts.running;
+    const tst = $("tsStatus");
+    tst.className = ts.url ? "status ok" : ts.error ? "status bad" : "status muted";
+    setText(tst, ts.url ? "Ready." : ts.error ?? (ts.installed ? "" : "Tailscale isn't installed."));
   }
 
   // relay
@@ -320,7 +343,7 @@ $<HTMLInputElement>("batcOn").onchange = (e) => void act("integrations", { beyon
 
 $<HTMLInputElement>("liteOn").onchange = (e) => void act("lite", { on: (e.target as HTMLInputElement).checked });
 
-async function act(name: "lite" | "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice", body: object = {}): Promise<boolean> {
+async function act(name: "lite" | "relay" | "newCode" | "forget" | "integrations" | "autostart" | "installPlugin" | "reconnectSim" | "pause" | "updateCheck" | "updateInstall" | "voice" | "tailscale", body: object = {}): Promise<boolean> {
   busy = true;
   try {
     const next = await call(`/api/console/${name}`, body);
@@ -375,6 +398,16 @@ $<HTMLButtonElement>("clearHoppie").onclick = async () => {
   if (await act("integrations", { hoppie: "" })) accountsSay("Hoppie code removed.", "muted");
 };
 $("newCode").onclick = () => void act("newCode");
+$("tsServe").onclick = () => void act("tailscale", { serve: true });
+$("tsCheck").onclick = () => void act("tailscale", {});
+$<HTMLButtonElement>("copyTs").onclick = (e) => info?.tailscale?.url && void copy(info.tailscale.url, e.target as HTMLButtonElement);
+$<HTMLButtonElement>("qrTs").onclick = () => {
+  const u = info?.tailscale?.url;
+  if (!u) return;
+  const box = $("tsQr");
+  if (box.hidden) showQr(box, u);
+  else box.hidden = true;
+};
 $<HTMLInputElement>("relayOn").onchange = (e) => void act("relay", { enabled: (e.target as HTMLInputElement).checked });
 $<HTMLButtonElement>("copyRelay").onclick = (e) => info && void copy(info.relay.phoneLink, e.target as HTMLButtonElement);
 $<HTMLButtonElement>("qrRelay").onclick = () => {
